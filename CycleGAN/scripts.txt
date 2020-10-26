@@ -1,0 +1,10 @@
+$NAME=jta_2_duke_first_attempt
+$RESULT_DIR=jta_2_duke_6_resnet_10_epochs
+
+python train.py --dataroot ./datasets/jta_2_duke/ --name $NAME --model cycle_gan 
+
+python generate_results.py --dataroot datasets/jta_2_duke/ --name $NAME --model cycle_gan --num_test 200000 --results_dir ../../datasets/$RESULT_DIR/bounding_box_train/ --load_size 256  
+
+python train.py --gpu_id 0 --name $RESULT_DIR --checkpoint_every 50 --dataroot ../../datasets/DukeMTMC/ --dataroot ../../datasets/$RESULT_DIR
+
+python test.py --name $RESULT_DIR --dataroot ../../datasets/DukeMTMC/ --gpu_id 0
