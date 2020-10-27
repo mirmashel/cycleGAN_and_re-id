@@ -31,7 +31,7 @@ if __name__ == "__main__":
     print('Computing gallery descriptors')
     backbone_model = model.get_backbone_model()
     backbone_model.eval()
-    save_path = osp.join(opt.save_result_path, 'gallery_descriptors_{}.npy'.format(opt.initial_suffix))
+    save_path = osp.join(opt.save_result_path, 'gallery_descriptors_{}.npy'.format(opt.initial_suffix if opt.save_suffix == '' else opt.save_suffix))
     if osp.exists(save_path) and not opt.no_load:
         gallery = np.load(save_path, allow_pickle=True)
     else:
@@ -49,7 +49,7 @@ if __name__ == "__main__":
 
     # Computing cosine distances
     print('Computing cosine distanses')
-    save_path = osp.join(opt.save_result_path, 'cos_dist_{}.npy'.format(opt.initial_suffix))
+    save_path = osp.join(opt.save_result_path, 'cos_dist_{}.npy'.format(opt.initial_suffix if opt.save_suffix == '' else opt.save_suffix))
     if osp.exists(save_path) and not opt.no_load:
         cos_dist = np.load(save_path, allow_pickle=True)
     else:
@@ -121,7 +121,7 @@ if __name__ == "__main__":
         
     mAP = map_sum / p_r_dots.shape[0]
 
-    save_path = osp.join(opt.save_result_path, 'result_{}.txt'.format(opt.initial_suffix))
+    save_path = osp.join(opt.save_result_path, 'result_{}.txt'.format(opt.initial_suffix if opt.save_suffix == '' else opt.save_suffix))
     with open(save_path, 'w') as result:
         result.write("Rank-1: {}\n".format(rank_1 * 100))
         print("Rank-1: ", rank_1 * 100)
