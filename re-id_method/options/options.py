@@ -12,7 +12,7 @@ class Options():
             parser.add_argument('--start_epoch', type = int, default = 1, help = '# of start epoch')
             parser.add_argument('--batch_size', type = int, default = 16, help = 'Batch size')
             parser.add_argument('--lr', type = float, default = 0.05, help = 'Initial learning rate for SGD optimizer')
-            parser.add_argument('--warmup_epoch', type = int, default = 5, help = 'Epochs to GradualWarmupScheduler')
+            parser.add_argument('--warmup_epoch', type = int, default = 0, help = 'Epochs to GradualWarmupScheduler')
             parser.add_argument('--start_step_lr', type = int, default = 40, help = 'Epoch from which reduce lr')
 
             parser.add_argument('--dataroot', type = str, action = 'append', required = True, help = 'list of paths to images root(Duke style)')
@@ -23,7 +23,7 @@ class Options():
             parser.add_argument('--initial_weights', type = str, help = 'Initialization weights experiment name')
             parser.add_argument('--initial_suffix', type = str, default = 'latest', help = 'Intital suffix')
 
-            parser.add_argument('--checkpoint_every', type = int, default = 50, help = 'Number of epochs to make checkpoint')
+            parser.add_argument('--checkpoint_every', type = int, default = 1000, help = 'Number of epochs to make checkpoint')
 
 
 
@@ -47,6 +47,7 @@ class Options():
             parser.add_argument('--initial_suffix', type = str, default = 'latest', help = 'Intital suffix')
             parser.add_argument('--batch_size', type = int, default = 32, help = 'Batch size of testing')
             parser.add_argument('--no_load', action = 'store_true', help = 'Specify if not to use stored computations')
+            parser.add_argument('--save_suffix', type = str, default = '', help = 'Suffix to save results')
 
             self.opt = parser.parse_args()
 
