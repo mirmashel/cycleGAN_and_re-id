@@ -18,10 +18,13 @@ class Options():
             parser.add_argument('--dataroot', type = str, action = 'append', required = True, help = 'list of paths to images root(Duke style)')
             parser.add_argument('--gpu_id', type = int, default = 0, help = 'Specify gpu ids if -1 than CPU')
             parser.add_argument('--name', type = str, required = True, help = 'Name of the experiment')
+            parser.add_argument('--save_suffix', type = str, default = '', help = 'Suffix to save results')
 
             parser.add_argument('--only_backbone', action = 'store_true', help = 'Need if load only backbone weights (for finetuning on another number of person_id)')
             parser.add_argument('--initial_weights', type = str, help = 'Initialization weights experiment name')
             parser.add_argument('--initial_suffix', type = str, default = 'latest', help = 'Intital suffix')
+            parser.add_argument('--pretrain_classifiers_epochs', type=int, default = 0, help = 'Steps to pretrain classifiers')
+            parser.add_argument('--pretrain_classifiers_lr', type=int, default = 0.05, help = 'Steps to pretrain classifiers')
 
             parser.add_argument('--checkpoint_every', type = int, default = 1000, help = 'Number of epochs to make checkpoint')
 

@@ -9,6 +9,8 @@ class GradualWarmupScheduler(_LRScheduler):
         self.total_epoch = total_epoch
         self.after_scheduler = after_scheduler
         self.finished = False
+        if total_epoch == 0:
+            self.finished = True
         super().__init__(optimizer)
 
     def get_lr(self):

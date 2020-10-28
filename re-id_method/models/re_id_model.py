@@ -22,9 +22,15 @@ class ReIDModel(nn.Module):
         self.fc2 = nn.Linear(person_number, out_features=person_number)
         self.fc3 = nn.Linear(person_number, out_features=2)
         
-    def forward(self, x, y):
-        f1 = self.backbone(x)
-        f2 = self.backbone(y)
+    def forward(self, x, y, only_ident = False):
+        if only_ident:
+            with torch.no_grad():
+                f1 = self.backbone(x)
+                f2 = self.backbone(y)
+        else:
+            f1 = self.backbone(x)
+            f2 = self.backbone(y)
+            
         x = self.fc1(self.conv_ident1(f1).view(x.size(0), -1))
         y = self.fc2(self.conv_ident2(f2).view(y.size(0), -1))
         z = (f1 - f2) ** 2

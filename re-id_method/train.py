@@ -24,9 +24,14 @@ if __name__ == "__main__":
 
 
     try:
-        for epoch in range(opt.start_epoch, opt.nepochs + 1):
+        for epoch in range(opt.start_epoch, opt.nepochs + 1 + opt.pretrain_classifiers_epochs):
 
-            print("Starts epoch ", epoch)
+            if epoch <= opt.pretrain_classifiers_epochs:
+                optimizer.param_groups[0]['lr'] = opt.pretrain_classifiers_lr
+            elif epoch == opt.pretrain_classifiers_epochs + 1:
+                optimizer.param_groups[0]['lr'] = opt.lr
+
+            print("Starts epoch ", epoch, ", Lr ", optimizer.param_groups[0]['lr'])
             
             loss_list = []
             acc_verification_list = []
@@ -63,8 +68,8 @@ if __name__ == "__main__":
                     images_second[j] = second_image["image"]
                     persons_id_second[j] = second_image["person_id"]
                     
-                    
-                output = model(images_first, images_second)
+
+                output = model(images_first, images_second, epoch <= opt.pretrain_classifiers_epochs)
 
                 loss_verification = F.cross_entropy(output[0], verification)
                 loss_first_id = F.cross_entropy(output[1], persons_id_first)
@@ -89,8 +94,8 @@ if __name__ == "__main__":
                 correct = (predicted == persons_id_second).sum().item()
                 acc_second_id_list.append(correct / persons_id_second.size()[0])
                 
-
-            scheduler_warmup.step()
+            if epoch > opt.pretrain_classifiers_epochs:
+                scheduler_warmup.step()
                 
             if epoch % opt.checkpoint_every == 0 and epoch != 0: 
                 model.save_model(opt.save_weights_path, epoch) 
@@ -105,4 +110,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         pass
 
-    model.save_model(opt.save_weights_path, "latest")
+    model.save_model(opt.save_weights_path, "latest" if opt.save_suffix == '' else opt.save_suffix)
