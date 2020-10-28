@@ -10,9 +10,9 @@
 
 pwd; hostname; nvidia-smi; date
 
-singularity exec ../../images/torch.simg python3 train.py --name Market1501_JTA_parsed__jta_2_duke_resnet9 --nepochs 80 --warmup_epoch 5 --start_step_lr 30 --dataroot ../../datasets/Market-1501 --dataroot ../../datasets/JTA_parsed --gpu_id 0 --save_suffix pre
+singularity exec ../../images/torch.simg python3 train.py --name Market1501_JTA_parsed__jta_2_duke_resnet9 --nepochs 100 --warmup_epoch 6 --start_step_lr 40 --dataroot ../../datasets/Market-1501 --dataroot ../../datasets/JTA_parsed --gpu_id 0 --save_suffix pre
 singularity exec ../../images/torch.simg python3 test.py --name Market1501_JTA_parsed__jta_2_duke_resnet9 --dataroot ../../datasets/DukeMTMC/ --gpu_id 0 --save_suffix pre --initial_suffix pre
-singularity exec ../../images/torch.simg python3 train.py --name Market1501_JTA_parsed__jta_2_duke_resnet9 --nepochs 80 --lr 0.0001 --start_step_lr 30 --dataroot ../../datasets/jta_2_duke_resnet9 --gpu_id 0 --only_backbone --initial_weights Market1501_JTA_parsed__jta_2_duke_resnet9 --initial_suffix pre --pretrain_classifiers_epochs 5
+singularity exec ../../images/torch.simg python3 train.py --name Market1501_JTA_parsed__jta_2_duke_resnet9 --nepochs 40 --lr 0.0001 --start_step_lr 20 --dataroot ../../datasets/jta_2_duke_resnet9 --gpu_id 0 --only_backbone --initial_weights Market1501_JTA_parsed__jta_2_duke_resnet9 --initial_suffix pre --pretrain_classifiers_epochs 5
 singularity exec ../../images/torch.simg python3 test.py --name Market1501_JTA_parsed__jta_2_duke_resnet9 --dataroot ../../datasets/DukeMTMC/ --gpu_id 0
 
 date
