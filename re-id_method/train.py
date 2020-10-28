@@ -16,6 +16,7 @@ if __name__ == "__main__":
 
     model = get_model(train_data.total_ids, opt.load_weights_path, opt.initial_suffix, opt.only_backbone, opt.device) 
     # print(model)
+    print(opt.log_file)
 
     if opt.log_file != '':
         f = open(opt.log_file, 'w')
@@ -36,7 +37,7 @@ if __name__ == "__main__":
             optimizer.param_groups[0]['lr'] = opt.lr
 
         if opt.log_file != '':
-            f.write(("Starts epoch ", str(epoch), ", Lr ", str(optimizer.param_groups[0]['lr'])))
+            f.writelines(("Starts epoch ", str(epoch), ", Lr ", str(optimizer.param_groups[0]['lr']), '\n'))
             f.flush()
 
         print("Starts epoch ", epoch, ", Lr ", optimizer.param_groups[0]['lr'])

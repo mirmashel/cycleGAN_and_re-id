@@ -36,7 +36,7 @@ class Options():
             self.opt.save_weights_path = osp.join("./checkpoints", self.opt.name)
 
             if self.opt.log_file != '':
-                self.opt.log_file = osp.join(self.opt.save_weights_path, self.log_file)
+                self.opt.log_file = osp.join(self.opt.save_weights_path, self.opt.log_file)
 
             if not osp.exists(self.opt.save_weights_path):
                 os.makedirs(self.opt.save_weights_path)
