@@ -17,6 +17,10 @@ if __name__ == "__main__":
     model = get_model(train_data.total_ids, opt.load_weights_path, opt.initial_suffix, opt.only_backbone, opt.device) 
     # print(model)
 
+    if opt.log_file != '':
+        f = open(opt.log_file, 'w')
+
+
 
     optimizer = torch.optim.SGD(model.parameters(), lr = opt.lr) 
     scheduler_lr_red = torch.optim.lr_scheduler.StepLR(optimizer, opt.start_step_lr, 0.1) 
@@ -30,6 +34,10 @@ if __name__ == "__main__":
             optimizer.param_groups[0]['lr'] = opt.pretrain_classifiers_lr
         elif epoch == opt.pretrain_classifiers_epochs + 1:
             optimizer.param_groups[0]['lr'] = opt.lr
+
+        if opt.log_file != '':
+            f.write(("Starts epoch ", str(epoch), ", Lr ", str(optimizer.param_groups[0]['lr'])))
+            f.flush()
 
         print("Starts epoch ", epoch, ", Lr ", optimizer.param_groups[0]['lr'])
         
@@ -107,6 +115,17 @@ if __name__ == "__main__":
                       sum(acc_second_id_list) / float(len(acc_second_id_list)),
                       sum(acc_first_id_val_list) / float(len(acc_first_id_val_list)),
                       sum(acc_second_id_val_list) / float(len(acc_second_id_val_list))))
+
+        if opt.log_file != '':
+            f.write('{}\'s epoch is over, Loss: {:.4f}, Verification Accuracy: {:.6f}%, First Person ID Accuracy: {:.6f}%, Second Person ID Accuracy: {:.6f}%, First Person ID Val Accuracy: {:.6f}%, Second Person ID Val Accuracy: {:.6f}%\n'
+                  .format(epoch, sum(loss_list) / float(len(loss_list)), 
+                          sum(acc_verification_list) / float(len(acc_verification_list)), 
+                          sum(acc_first_id_list) / float(len(acc_first_id_list)),
+                          sum(acc_second_id_list) / float(len(acc_second_id_list)),
+                          sum(acc_first_id_val_list) / float(len(acc_first_id_val_list)),
+                          sum(acc_second_id_val_list) / float(len(acc_second_id_val_list))))
+            f.flush()
+
     
 
     model.save_model(opt.save_weights_path, "latest" if opt.save_suffix == '' else opt.save_suffix)

@@ -30,10 +30,9 @@
 
 # 2
 
-python train.py --name Market1501__jta_2_duke_resnet9 --nepochs 80 --warmup_epoch 4 --start_step_lr 30 --dataroot ../../datasets/Market-1501 --gpu_id 0 --save_suffix pre
+python train.py --name Market1501_JTA_parsed__jta_2_duke_resnet9 --nepochs 80 --warmup_epoch 4 --start_step_lr 30 --dataroot ../../datasets/Market-1501 --dataroot ../../datasets/JTA_parsed --gpu_id 0 --save_suffix pre
+python test.py --name Market1501_JTA_parsed__jta_2_duke_resnet9 --dataroot ../../datasets/DukeMTMC/ --gpu_id 0 --save_suffix pre --initial_suffix pre
+python train.py --name Market1501_JTA_parsed__jta_2_duke_resnet9 --nepochs 80 --lr 0.0001 --start_step_lr 30 --dataroot ../../datasets/jta_2_duke_resnet9 --gpu_id 0 --only_backbone --initial_weights Market1501_JTA_parsed__jta_2_duke_resnet9 --initial_suffix pre --pretrain_classifiers_epochs 5
+python test.py --name Market1501_JTA_parsed__jta_2_duke_resnet9 --dataroot ../../datasets/DukeMTMC/ --gpu_id 0
 
-python test.py --name Market1501__jta_2_duke_resnet9 --dataroot ../../datasets/DukeMTMC/ --gpu_id 0 --save_suffix pre --initial_suffix pre
 
-python train.py --name Market1501__jta_2_duke_resnet9 --nepochs 80 --lr 0.001 --start_step_lr 30 --dataroot ../../datasets/jta_2_duke_resnet9 --gpu_id 0 --only_backbone --initial_weights Market1501__jta_2_duke_resnet9 --initial_suffix pre --pretrain_classifiers_epochs 4
-
-python test.py --name Market1501__jta_2_duke_resnet9 --dataroot ../../datasets/DukeMTMC/ --gpu_id 0

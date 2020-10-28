@@ -27,12 +27,17 @@ class Options():
             parser.add_argument('--pretrain_classifiers_lr', type=int, default = 0.05, help = 'Steps to pretrain classifiers')
 
             parser.add_argument('--checkpoint_every', type = int, default = 1000, help = 'Number of epochs to make checkpoint')
+            parser.add_argument('--log_file', type = str, default = '', help = 'file to save logs')
 
 
 
             self.opt = parser.parse_args()
 
             self.opt.save_weights_path = osp.join("./checkpoints", self.opt.name)
+
+            if opt.log_file != '':
+                self.opt.log_file = osp.join(self.opt.save_weights_path, self.log_file)
+
             if not osp.exists(self.opt.save_weights_path):
                 os.makedirs(self.opt.save_weights_path)
             self.opt.load_weights_path = osp.join("./checkpoints", self.opt.initial_weights) if self.opt.initial_weights is not None else None

@@ -9,8 +9,6 @@
 #SBATCH --error=./out/mmdet_%j.err
 
 pwd; hostname; nvidia-smi; date
-# singularity exec ../../images/torch.simg python3 train.py --name DukeMTMC__jta_2_duke_resnet9_v2 --nepochs 160 --warmup_epoch 6 --start_step_lr 40 --checkpoint_every 161 --dataroot ../../datasets/DukeMTMC/ --dataroot ../../datasets/jta_2_duke_resnet9/ --gpu_id 0
-# singularity exec ../../images/torch.simg python3 test.py --name DukeMTMC__jta_2_duke_resnet9_v2 --dataroot ../../datasets/DukeMTMC/ --gpu_id 0
 
 singularity exec ../../images/torch.simg python3 train.py --name Market1501_JTA_parsed__jta_2_duke_resnet9 --nepochs 80 --warmup_epoch 5 --start_step_lr 30 --dataroot ../../datasets/Market-1501 --dataroot ../../datasets/JTA_parsed --gpu_id 0 --save_suffix pre
 singularity exec ../../images/torch.simg python3 test.py --name Market1501_JTA_parsed__jta_2_duke_resnet9 --dataroot ../../datasets/DukeMTMC/ --gpu_id 0 --save_suffix pre --initial_suffix pre
