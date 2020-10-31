@@ -1,3 +1,4 @@
+.ipynb_checkpoints
 __pycache__
 /re-id_method/models/res2net50_26w_4s-06e79181.pth
 /re-id_method/checkpoints/
