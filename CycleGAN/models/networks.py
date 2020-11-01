@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.nn import init
 import functools
 from torch.optim import lr_scheduler
-
+import torchvision
 
 ###############################################################################
 # Helper Functions
@@ -203,9 +203,34 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal'
     return init_net(net, init_type, init_gain, gpu_ids)
 
 
+def define_SP(backbone_name = 'resnet34', init_type='normal', init_gain=0.02, gpu_ids=[]):
+    net = TripletLossModel(backbone_name)
+    return init_net(net, init_type, init_gain, gpu_ids)
+
 ##############################################################################
 # Classes
 ##############################################################################
+class TripletLossModel(nn.Module):
+
+    def __init__(self, backbone_name = 'resnet34'):
+        super(TripletLossModel, self).__init__()
+        if backbone_name == 'resnet34':
+            backbone = torchvision.models.resnet34
+        elif backbone_name == 'resnet18':
+            backbone = torchvision.models.resnet18
+        else:
+            raise NotImplementedError('TripletLossModel model name [%s] is not recognized' % backbone_name)
+
+        self.backbone = nn.Sequential(*list(backbone(pretrained = True).children())[:-1])
+
+
+    def forward(self, anchor, positive, negative):
+        self.anchor_emb = self.backbone(anchor)
+        self.positive_emb = self.backbone(positive)
+        self.negative_emb = self.backbone(negative)
+        return self.anchor_emb, self.positive_emb, self.negative_emb
+
+
 class GANLoss(nn.Module):
     """Define different GAN objectives.
 

@@ -36,5 +36,10 @@ class TrainOptions(BaseOptions):
         parser.add_argument('--lr_policy', type=str, default='linear', help='learning rate policy. [linear | step | plateau | cosine]')
         parser.add_argument('--lr_decay_iters', type=int, default=50, help='multiply by a gamma every lr_decay_iters iterations')
 
+
+        parser.add_argument('--use_SP', action = 'store_true', help = 'use similarity preserving loss (only cycleGAN)')
+        parser.add_argument('--SP_backbone', type = str, default = 'resnet34', help = 'backbone to similarity preserving model (only cycleGAN)')
+        parser.add_argument('--SP_m', type = float, default = 2, help = 'margin to train similarity preserving model (only cycleGAN)')
+        
         self.isTrain = True
         return parser
