@@ -53,7 +53,7 @@ class CycleGANModel(BaseModel):
         """
         BaseModel.__init__(self, opt)
 
-        self.use_SP = opt.use_SP
+        self.use_SP = opt.isTrain and opt.use_SP
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
         self.loss_names = ['D_A', 'G_A', 'cycle_A', 'idt_A', 'D_B', 'G_B', 'cycle_B', 'idt_B']
         if self.use_SP:
