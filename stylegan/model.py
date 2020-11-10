@@ -4,6 +4,8 @@ from torch import nn
 from torch.nn import init
 from torch.nn import functional as F
 from torch.autograd import Function
+from torchvision import models
+import os
 
 from math import sqrt
 
@@ -377,15 +379,15 @@ class Generator(nn.Module):
 
         self.progression = nn.ModuleList(
             [
-                StyledConvBlock(512, 512, 3, 1, initial=True),  # 4
-                StyledConvBlock(512, 512, 3, 1, upsample=True),  # 8
-                StyledConvBlock(512, 512, 3, 1, upsample=True),  # 16
-                StyledConvBlock(512, 512, 3, 1, upsample=True),  # 32
-                StyledConvBlock(512, 256, 3, 1, upsample=True),  # 64
-                StyledConvBlock(256, 128, 3, 1, upsample=True, fused=fused),  # 128
-                StyledConvBlock(128, 64, 3, 1, upsample=True, fused=fused),  # 256
-                StyledConvBlock(64, 32, 3, 1, upsample=True, fused=fused),  # 512
-                StyledConvBlock(32, 16, 3, 1, upsample=True, fused=fused),  # 1024
+                StyledConvBlock(512, 512, 3, 1, initial=True, style_dim=code_dim),  # 4
+                StyledConvBlock(512, 512, 3, 1, upsample=True, style_dim=code_dim),  # 8
+                StyledConvBlock(512, 512, 3, 1, upsample=True, style_dim=code_dim),  # 16
+                StyledConvBlock(512, 512, 3, 1, upsample=True, style_dim=code_dim),  # 32
+                StyledConvBlock(512, 256, 3, 1, upsample=True, style_dim=code_dim),  # 64
+                StyledConvBlock(256, 128, 3, 1, upsample=True, style_dim=code_dim, fused=fused),  # 128
+                StyledConvBlock(128, 64, 3, 1, upsample=True, style_dim=code_dim, fused=fused),  # 256
+                # StyledConvBlock(64, 32, 3, 1, upsample=True, fused=fused),  # 512
+                # StyledConvBlock(32, 16, 3, 1, upsample=True, fused=fused),  # 1024
             ]
         )
 
@@ -398,8 +400,8 @@ class Generator(nn.Module):
                 EqualConv2d(256, 3, 1),
                 EqualConv2d(128, 3, 1),
                 EqualConv2d(64, 3, 1),
-                EqualConv2d(32, 3, 1),
-                EqualConv2d(16, 3, 1),
+                # EqualConv2d(32, 3, 1),
+                # EqualConv2d(16, 3, 1),
             ]
         )
 
@@ -449,34 +451,68 @@ class Generator(nn.Module):
 
 
 class StyledGenerator(nn.Module):
-    def __init__(self, code_dim=512, n_mlp=8):
+    def __init__(self, code_dim=512, n_mlp=8, classes = 700, use_cls = True):
         super().__init__()
 
         self.generator = Generator(code_dim)
 
-        layers = [PixelNorm()]
-        for i in range(n_mlp):
-            layers.append(EqualLinear(code_dim, code_dim))
-            layers.append(nn.LeakyReLU(0.2))
+        self.synt_img_style = nn.Sequential(
+            EqualConv2d(3, 32, 3, padding=1),
+            nn.LeakyReLU(0.2),
+            EqualConv2d(32, 64, 4, padding=1),
+            nn.MaxPool2d(2, stride=2),
+            nn.LeakyReLU(0.2),
+            EqualConv2d(64, 128, 4, padding=1),
+            nn.MaxPool2d(2, stride=2),
+            nn.LeakyReLU(0.2),
+            EqualConv2d(128, 256, 3, padding=1),
+            nn.MaxPool2d(2, stride=2),
+            nn.LeakyReLU(0.2),
+            EqualConv2d(256, 512, 4, padding=1),
+            nn.LeakyReLU(0.2),
+            EqualConv2d(512, code_dim, 4, padding=1),
+            nn.AdaptiveMaxPool2d((1,1)),
+            nn.Flatten(),
+            nn.LeakyReLU(0.2),
+            EqualLinear(code_dim, code_dim),
+            nn.LeakyReLU(0.2),
+            EqualLinear(code_dim, code_dim),
+        )
 
-        self.style = nn.Sequential(*layers)
+        self.use_cls = classes is not None and use_cls
+
+        if self.use_cls:
+            self.classifier_on_style = nn.Sequential(
+                nn.LeakyReLU(0.2),
+                EqualLinear(code_dim, code_dim),
+                nn.LeakyReLU(0.2),
+                EqualLinear(code_dim, classes),
+            )
+        else:
+            self.classifier_on_style = None
+
+        self.init_noise = nn.Sequential(EqualLinear(code_dim, 16))
+
 
     def forward(
         self,
+        img_enc,
         input,
         noise=None,
         step=0,
         alpha=-1,
         mean_style=None,
         style_weight=0,
-        mixing_range=(-1, -1),
+        mixing_range=(-1, -1)
     ):
         styles = []
         if type(input) not in (list, tuple):
             input = [input]
 
+        img_code = self.synt_img_style(img_enc)
+
         for i in input:
-            styles.append(self.style(i))
+            styles.append(img_code)
 
         batch = input[0].shape[0]
 
@@ -486,6 +522,7 @@ class StyledGenerator(nn.Module):
             for i in range(step + 1):
                 size = 4 * 2 ** i
                 noise.append(torch.randn(batch, 1, size, size, device=input[0].device))
+            noise[0] = self.init_noise(img_code).view(-1, 1, 4, 4)
 
         if mean_style is not None:
             styles_norm = []
@@ -495,7 +532,14 @@ class StyledGenerator(nn.Module):
 
             styles = styles_norm
 
-        return self.generator(styles, noise, step, alpha, mixing_range=mixing_range)
+        if self.classifier_on_style is not None:
+            classifier = self.classifier_on_style(img_code)
+        else:
+            classifier = None
+        
+
+        generator_output = self.generator(styles, noise, step, alpha, mixing_range=mixing_range)
+        return generator_output, classifier
 
     def mean_style(self, input):
         style = self.style(input).mean(0, keepdim=True)
@@ -509,7 +553,7 @@ class Discriminator(nn.Module):
 
         self.progression = nn.ModuleList(
             [
-                ConvBlock(16, 32, 3, 1, downsample=True, fused=fused),  # 512
+                # ConvBlock(16, 32, 3, 1, downsample=True, fused=fused),  # 512
                 ConvBlock(32, 64, 3, 1, downsample=True, fused=fused),  # 256
                 ConvBlock(64, 128, 3, 1, downsample=True, fused=fused),  # 128
                 ConvBlock(128, 256, 3, 1, downsample=True, fused=fused),  # 64
@@ -530,7 +574,7 @@ class Discriminator(nn.Module):
 
         self.from_rgb = nn.ModuleList(
             [
-                make_from_rgb(16),
+                # make_from_rgb(16),
                 make_from_rgb(32),
                 make_from_rgb(64),
                 make_from_rgb(128),
@@ -575,3 +619,94 @@ class Discriminator(nn.Module):
         out = self.linear(out)
 
         return out
+
+
+
+
+class VGG(nn.Module):
+    def __init__(self, resolution = 8, num_classes = 700, only_features = False):
+        super(VGG, self).__init__()
+        
+        self.only_features = only_features
+        self.resolution = resolution
+        self.vgg13 = models.vgg13_bn(pretrained = True) # False на True
+
+        if not only_features:
+            self.vgg13.avgpool = nn.AdaptiveAvgPool2d((2, 2))
+            self.vgg13.classifier = nn.Sequential(
+                nn.Linear(2048, 512),
+                nn.ReLU(True),
+                nn.Linear(512, 512),
+                nn.ReLU(True),
+                nn.Linear(512, num_classes),
+            )
+
+        if resolution == 8:
+            self.vgg13.features = self.vgg13.features[:-8]
+            
+        if resolution == 16:
+            self.vgg13.features = self.vgg13.features[:-1]
+        
+    def forward(self, x):
+        return self.vgg13(x)
+        
+    def save(self, save_path, save_name = 'VGG_13'):
+        os.makedirs(save_path, exist_ok=True)
+        save_name = save_name + '_' + str(self.resolution) + '.pth'
+        save_name = os.path.join(save_path, save_name)
+
+        if self.only_features:
+            param_to_save = {
+                'features' : self.vgg13.features.state_dict(),
+            }
+        else:
+            param_to_save = {
+                'features' : self.vgg13.features.state_dict(),
+                'avgpool' : self.vgg13.avgpool.state_dict(),
+                'classifier' : self.vgg13.classifier.state_dict(),
+            }
+
+        torch.save(param_to_save, save_name)
+        
+    def load(self, load_path, load_name = 'VGG_13'):
+        load_name = load_name + '_' + str(self.resolution) + '.pth'
+        load_name = os.path.join(load_path, load_name)
+        ckpt = torch.load(load_name, map_location = 'cpu')
+        
+        self.vgg13.features.load_state_dict(ckpt['features'])
+        if not self.only_features:
+            self.vgg13.avgpool.load_state_dict(ckpt['avgpool']) 
+            self.vgg13.classifier.load_state_dict(ckpt['classifier']) 
+
+        # self.vgg13.load_state_dict(ckpt['vgg'])
+
+
+
+class PerceptualLoss_v1(nn.Module):
+    def __init__(self, weights = [1.0, 1.0, 1.0, 1.0, 1.0], resolution = 8, load_path = '', load_prefix = "imagenet"):
+        super(PerceptualLoss_v1, self).__init__()
+        self.vgg = VGG(resolution, only_features = True)
+        if load_prefix != "imagenet":
+            self.vgg.load(load_path, load_prefix)
+        self.vgg.eval()
+        self.weights = weights
+        self.criterion = torch.nn.L1Loss()
+
+    def __call__(self, x, y, synt_imgs_loss=False):
+        # Compute features
+        x_vgg1, x_vgg2, x_vgg3, x_vgg4 = self.get_img_features(x)
+        y_vgg1, y_vgg2, y_vgg3, y_vgg4 = self.get_img_features(y)
+
+        content_loss = 0.0
+        content_loss += self.weights[0] * self.criterion(x_vgg1, y_vgg1)
+        content_loss += self.weights[1] * self.criterion(x_vgg2, y_vgg2)
+        content_loss += self.weights[2] * self.criterion(x_vgg3, y_vgg3)
+        content_loss += self.weights[3] * self.criterion(x_vgg4, y_vgg4)
+        return content_loss
+
+    def get_img_features(self, x):
+        x_vgg1 = self.vgg.vgg13.features[:4](x)
+        x_vgg2 = self.vgg.vgg13.features[4:8](x_vgg1)
+        x_vgg3 = self.vgg.vgg13.features[8:15](x_vgg2)
+        x_vgg4 = self.vgg.vgg13.features[15:22](x_vgg3)
+        return x_vgg1, x_vgg2, x_vgg3, x_vgg4

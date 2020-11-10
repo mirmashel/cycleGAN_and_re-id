@@ -13,9 +13,10 @@ from torch.autograd import Variable, grad
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms, utils
 
-from dataset import MultiResolutionDataset
-from model import StyledGenerator, Discriminator
-
+from dataset import MultiResolutionDataset, AlignedDatasetLoader
+from model import StyledGenerator, Discriminator, PerceptualLoss_v1
+import os
+import time
 
 def requires_grad(model, flag=True):
     for p in model.parameters():
@@ -27,8 +28,8 @@ def accumulate(model1, model2, decay=0.999):
     par2 = dict(model2.named_parameters())
 
     for k in par1.keys():
-        par1[k].data.mul_(decay).add_(1 - decay, par2[k].data)
-
+        #par1[k].data.mul_(decay).add_(1 - decay, par2[k].data)
+        par1[k].data.mul_(decay).add_(par2[k].data, alpha = 1 - decay)
 
 def sample_data(dataset, batch_size, image_size=4):
     dataset.resolution = image_size
@@ -43,9 +44,40 @@ def adjust_lr(optimizer, lr):
         group['lr'] = lr * mult
 
 
-def train(args, dataset, generator, discriminator):
-    step = int(math.log2(args.init_size)) - 2
+def train(args, dataset, generator, discriminator, step = None, i = 0):
+    if step is None:
+        step = int(math.log2(args.init_size)) - 2
+
+
+    gen_i, gen_j = (4, 4)
+
+    idxs = np.random.randint(low = 0, high = len(dataset), size = (16, ))
+
+    fixed_batch = [dataset[idx]['img_enc'].unsqueeze(0) for idx in idxs]
+    save_name = os.path.join(args.experiment_dir, "sample")
+    os.makedirs(save_name, exist_ok = True)
+    save_name = os.path.join(save_name, f'{str(0).zfill(6)}.png')
+    utils.save_image(
+        torch.cat(fixed_batch, 0),
+        save_name,
+        nrow=gen_i,
+        normalize=True,
+        range=(-1, 1),
+    )
+
     resolution = 4 * 2 ** step
+
+    if args.lambda_cls != 0:
+        classifier_loss = nn.CrossEntropyLoss()
+    if args.lambda_idt != 0:
+        identity_loss = nn.L1Loss()
+    if args.lambda_prcp != 0:
+        perceptual_losses = {}
+        for res in (8, 16, 32, 64, 128, 256):
+            perceptual_losses[res] = PerceptualLoss_v1(resolution = res, load_path = args.path_vgg_weights, load_prefix = args.prefix_vgg_weights)
+        perceptual_loss = perceptual_losses[resolution].cuda()
+
+    
     loader = sample_data(
         dataset, args.batch.get(resolution, args.batch_default), resolution
     )
@@ -54,7 +86,7 @@ def train(args, dataset, generator, discriminator):
     adjust_lr(g_optimizer, args.lr.get(resolution, 0.001))
     adjust_lr(d_optimizer, args.lr.get(resolution, 0.001))
 
-    pbar = tqdm(range(3_000_000))
+    pbar = tqdm(range(i, args.total_iters))
 
     requires_grad(generator, False)
     requires_grad(discriminator, True)
@@ -70,14 +102,17 @@ def train(args, dataset, generator, discriminator):
     final_progress = False
 
     for i in pbar:
+        t0 = time.time()
+
         discriminator.zero_grad()
 
         alpha = min(1, 1 / args.phase * (used_sample + 1))
 
-        if (resolution == args.init_size and args.ckpt is None) or final_progress:
+        if (resolution == args.init_size and args.ckpt_name is None) or final_progress:
             alpha = 1
 
-        if used_sample > args.phase * 2:
+        if i != 0 and i % args.phase == 0:  
+        # if used_sample > args.phase * args.batch.get(resolution, args.batch_default):
             used_sample = 0
             step += 1
 
@@ -92,11 +127,17 @@ def train(args, dataset, generator, discriminator):
 
             resolution = 4 * 2 ** step
 
+            if args.lambda_prcp != 0:
+                del perceptual_loss
+                perceptual_loss = perceptual_losses[resolution].cuda()
+                # print("ercept changed")
+
             loader = sample_data(
                 dataset, args.batch.get(resolution, args.batch_default), resolution
             )
             data_loader = iter(loader)
 
+            save_name = os.path.join(args.experiment_dir, f'train_step-{ckpt_step}.model')
             torch.save(
                 {
                     'generator': generator.module.state_dict(),
@@ -104,19 +145,29 @@ def train(args, dataset, generator, discriminator):
                     'g_optimizer': g_optimizer.state_dict(),
                     'd_optimizer': d_optimizer.state_dict(),
                     'g_running': g_running.state_dict(),
+                    'step': step,
+                    'i': i,
                 },
-                f'checkpoint/train_step-{ckpt_step}.model',
+                save_name
             )
 
             adjust_lr(g_optimizer, args.lr.get(resolution, 0.001))
             adjust_lr(d_optimizer, args.lr.get(resolution, 0.001))
 
         try:
-            real_image = next(data_loader)
+            data_step = next(data_loader)
+            real_image = data_step['img_to'].cuda()
+            img_enc = data_step['img_enc'].cuda()
+            img_id_from = data_step['img_from_id'].cuda()
+            img_from = data_step['img_from'].cuda()
 
         except (OSError, StopIteration):
             data_loader = iter(loader)
-            real_image = next(data_loader)
+            data_step = next(data_loader)
+            real_image = data_step['img_to'].cuda()
+            img_enc = data_step['img_enc'].cuda()
+            img_id_from = data_step['img_from_id'].cuda()
+            img_from = data_step['img_from'].cuda()
 
         used_sample += real_image.shape[0]
 
@@ -147,19 +198,19 @@ def train(args, dataset, generator, discriminator):
 
         if args.mixing and random.random() < 0.9:
             gen_in11, gen_in12, gen_in21, gen_in22 = torch.randn(
-                4, b_size, code_size, device='cuda'
+                4, b_size, args.code_size, device='cuda'
             ).chunk(4, 0)
             gen_in1 = [gen_in11.squeeze(0), gen_in12.squeeze(0)]
             gen_in2 = [gen_in21.squeeze(0), gen_in22.squeeze(0)]
 
         else:
-            gen_in1, gen_in2 = torch.randn(2, b_size, code_size, device='cuda').chunk(
+            gen_in1, gen_in2 = torch.randn(2, b_size, args.code_size, device='cuda').chunk(
                 2, 0
             )
             gen_in1 = gen_in1.squeeze(0)
             gen_in2 = gen_in2.squeeze(0)
 
-        fake_image = generator(gen_in1, step=step, alpha=alpha)
+        fake_image, _ = generator(img_enc, gen_in1, step=step, alpha=alpha)
         fake_predict = discriminator(fake_image, step=step, alpha=alpha)
 
         if args.loss == 'wgan-gp':
@@ -196,9 +247,11 @@ def train(args, dataset, generator, discriminator):
             requires_grad(generator, True)
             requires_grad(discriminator, False)
 
-            fake_image = generator(gen_in2, step=step, alpha=alpha)
+            fake_image, classifier = generator(img_enc, gen_in2, step=step, alpha=alpha)
 
             predict = discriminator(fake_image, step=step, alpha=alpha)
+
+
 
             if args.loss == 'wgan-gp':
                 loss = -predict.mean()
@@ -208,6 +261,18 @@ def train(args, dataset, generator, discriminator):
 
             if i%10 == 0:
                 gen_loss_val = loss.item()
+            
+            if args.lambda_cls != 0:
+                cls_loss = classifier_loss(classifier, img_id_from)
+                loss += args.lambda_cls * cls_loss
+
+            if args.lambda_idt != 0:
+                idt_loss = identity_loss(fake_image, img_from)
+                loss += args.lambda_idt * idt_loss
+
+            if args.lambda_prcp != 0:
+                prcp_loss = perceptual_loss(fake_image, img_from)
+                loss += args.lambda_prcp * prcp_loss
 
             loss.backward()
             g_optimizer.step()
@@ -216,122 +281,149 @@ def train(args, dataset, generator, discriminator):
             requires_grad(generator, False)
             requires_grad(discriminator, True)
 
-        if (i + 1) % 100 == 0:
+
+
+
+
+        if (i + 1) % args.sample_iters == 0:
             images = []
 
-            gen_i, gen_j = args.gen_sample.get(resolution, (10, 5))
+            gen_i, gen_j = args.gen_sample.get(resolution, (4, 4))
 
             with torch.no_grad():
-                for _ in range(gen_i):
+                for k in range(gen_i):
+                    img_in_batch = torch.cat(fixed_batch[k * gen_j: (k + 1) * gen_j]).cuda()
                     images.append(
-                        g_running(
-                            torch.randn(gen_j, code_size).cuda(), step=step, alpha=alpha
-                        ).data.cpu()
+                        g_running(img_in_batch, torch.randn(gen_j, args.code_size).cuda(), step=step, alpha=alpha)[0].data.cpu()
                     )
 
+            save_name = os.path.join(args.experiment_dir, "sample")
+            os.makedirs(save_name, exist_ok = True)
+            save_name = os.path.join(save_name, f'{str(i + 1).zfill(6)}.png')
             utils.save_image(
                 torch.cat(images, 0),
-                f'sample/{str(i + 1).zfill(6)}.png',
+                save_name,
                 nrow=gen_i,
                 normalize=True,
                 range=(-1, 1),
             )
 
-        if (i + 1) % 10000 == 0:
+        if (i + 1) % args.save_iters == 0:
+
+            save_name = os.path.join(args.experiment_dir, f'{str(i + 1).zfill(6)}_{4 * 2 ** step}.model')
             torch.save(
-                g_running.state_dict(), f'checkpoint/{str(i + 1).zfill(6)}.model'
+                {
+                    'generator': generator.module.state_dict(),
+                    'discriminator': discriminator.module.state_dict(),
+                    'g_optimizer': g_optimizer.state_dict(),
+                    'd_optimizer': d_optimizer.state_dict(),
+                    'g_running': g_running.state_dict(),
+                    'step': step,
+                    'i': i,
+                },
+                save_name
             )
 
+
+
         state_msg = (
-            f'Size: {4 * 2 ** step}; G: {gen_loss_val:.3f}; D: {disc_loss_val:.3f};'
+            f'Iters: {i + 1}; Iter time: {(time.time() - t0):.2f}; Size: {4 * 2 ** step}; G: {gen_loss_val:.3f}; D: {disc_loss_val:.3f};'
             f' Grad: {grad_loss_val:.3f}; Alpha: {alpha:.5f}'
         )
+        if args.lambda_idt != 0:
+            state_msg += f'; idt_loss: {idt_loss.item():.3f}'
+        if args.lambda_cls != 0:
+            state_msg += f'; cls_loss: {cls_loss.item():.3f}'
+        if args.lambda_prcp != 0:
+            state_msg += f'; prcp_loss: {prcp_loss.item():.3f}'
 
         pbar.set_description(state_msg)
 
 
 if __name__ == '__main__':
-    code_size = 512
-    batch_size = 16
     n_critic = 1
 
     parser = argparse.ArgumentParser(description='Progressive Growing of GANs')
 
-    parser.add_argument('path', type=str, help='path of specified dataset')
-    parser.add_argument(
-        '--phase',
-        type=int,
-        default=600_000,
-        help='number of samples used for each training phases',
-    )
+    # parser.add_argument('path', type=str, help='path of specified dataset')
+    parser.add_argument('--name', type=str, help='Name of experiment')
+
+    parser.add_argument('--source_path', type = str)
+    parser.add_argument('--target_path', type = str)
+    parser.add_argument('--sample_iters', type = int, default = 100)
+    parser.add_argument('--save_iters', type = int, default = 10_000)
+
+    parser.add_argument('--total_iters', type=int, default=100_000, help='number of samples used for each training phases')
+    parser.add_argument('--phase', type=int, default=10_000, help='number of samples used for each training phases')
     parser.add_argument('--lr', default=0.001, type=float, help='learning rate')
     parser.add_argument('--sched', action='store_true', help='use lr scheduling')
     parser.add_argument('--init_size', default=8, type=int, help='initial image size')
-    parser.add_argument('--max_size', default=1024, type=int, help='max image size')
-    parser.add_argument(
-        '--ckpt', default=None, type=str, help='load from previous checkpoints'
-    )
-    parser.add_argument(
-        '--no_from_rgb_activate',
-        action='store_true',
-        help='use activate in from_rgb (original implementation)',
-    )
-    parser.add_argument(
-        '--mixing', action='store_true', help='use mixing regularization'
-    )
-    parser.add_argument(
-        '--loss',
-        type=str,
-        default='wgan-gp',
-        choices=['wgan-gp', 'r1'],
-        help='class of gan loss',
-    )
+    parser.add_argument('--max_size', default=256, type=int, help='max image size')
+    parser.add_argument('--code_size', default=512, type=int)
+    parser.add_argument('--lambda_cls', default = 0, type = float)
+    parser.add_argument('--lambda_idt', default = 0, type = float)
+    parser.add_argument('--lambda_prcp', default = 0, type = float)
+    parser.add_argument('--loss', type=str, default='wgan-gp', choices=['wgan-gp', 'r1'], help='class of gan loss')
+    parser.add_argument('--no_from_rgb_activate', action='store_true', help='use activate in from_rgb (original implementation)')
+    parser.add_argument('--path_vgg_weights', type = str, default = "vgg_weights")
+    parser.add_argument('--prefix_vgg_weights', type = str, default = "VGG_13")
 
+    parser.add_argument('--ckpt_name', default=None, type=str, help='load from previous checkpoints')
+    
+    parser.add_argument('--mixing', action='store_true', help='use mixing regularization')
+    
     args = parser.parse_args()
+    args.experiment_dir = os.path.join("./checkpoints", args.name)
+    os.makedirs(args.experiment_dir, exist_ok = True)
 
-    generator = nn.DataParallel(StyledGenerator(code_size)).cuda()
+    transform = transforms.Compose(
+        [
+            # transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True),
+        ]
+    )
+
+    dataset = AlignedDatasetLoader(args.source_path, args.target_path, transform, enc_resolution = args.max_size)
+
+
+
+    generator = nn.DataParallel(StyledGenerator(args.code_size, classes = dataset.total_ids, use_cls = args.lambda_cls != 0)).cuda()
     discriminator = nn.DataParallel(
         Discriminator(from_rgb_activate=not args.no_from_rgb_activate)
     ).cuda()
-    g_running = StyledGenerator(code_size).cuda()
+    g_running = StyledGenerator(args.code_size, classes = dataset.total_ids, use_cls = args.lambda_cls != 0).cuda()
     g_running.train(False)
 
     g_optimizer = optim.Adam(
         generator.module.generator.parameters(), lr=args.lr, betas=(0.0, 0.99)
     )
-    g_optimizer.add_param_group(
-        {
-            'params': generator.module.style.parameters(),
-            'lr': args.lr * 0.01,
-            'mult': 0.01,
-        }
-    )
+    g_optimizer.add_param_group({'params': generator.module.synt_img_style.parameters()})
+    if args.lambda_cls != 0:
+        g_optimizer.add_param_group({'params': generator.module.classifier_on_style.parameters()})
+    g_optimizer.add_param_group({'params': generator.module.init_noise.parameters()})
+
     d_optimizer = optim.Adam(discriminator.parameters(), lr=args.lr, betas=(0.0, 0.99))
 
     accumulate(g_running, generator.module, 0)
 
-    if args.ckpt is not None:
-        ckpt = torch.load(args.ckpt)
+    step = None
+    i = 0
+    if args.ckpt_name is not None:
+        # ckpt_name = os.path.join("./checkpoints", args.ckpt_name)
+        ckpt = torch.load(args.ckpt_name)
 
         generator.module.load_state_dict(ckpt['generator'])
         discriminator.module.load_state_dict(ckpt['discriminator'])
         g_running.load_state_dict(ckpt['g_running'])
         g_optimizer.load_state_dict(ckpt['g_optimizer'])
         d_optimizer.load_state_dict(ckpt['d_optimizer'])
-
-    transform = transforms.Compose(
-        [
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True),
-        ]
-    )
-
-    dataset = MultiResolutionDataset(args.path, transform)
+        step = ckpt['step']
+        i = ckpt['i'] + 1
 
     if args.sched:
-        args.lr = {128: 0.0015, 256: 0.002, 512: 0.003, 1024: 0.003}
-        args.batch = {4: 512, 8: 256, 16: 128, 32: 64, 64: 32, 128: 32, 256: 32}
+        args.lr = {128: 0.0015, 256: 0.002}
+        args.batch = {4: 128, 8: 64, 16: 64, 32: 32, 64: 32, 128: 16, 256: 4}
 
     else:
         args.lr = {}
@@ -341,4 +433,4 @@ if __name__ == '__main__':
 
     args.batch_default = 32
 
-    train(args, dataset, generator, discriminator)
+    train(args, dataset, generator, discriminator, step, i)
