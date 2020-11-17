@@ -44,7 +44,7 @@ def adjust_lr(optimizer, lr):
         group['lr'] = lr * mult
 
 
-def train(args, dataset, generator, discriminator, step = None, i = 0):
+def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = None):
     if step is None:
         step = int(math.log2(args.init_size)) - 2
 
@@ -86,6 +86,8 @@ def train(args, dataset, generator, discriminator, step = None, i = 0):
     adjust_lr(g_optimizer, args.lr.get(resolution, 0.001))
     adjust_lr(d_optimizer, args.lr.get(resolution, 0.001))
 
+    args.total_iters = sum(args.iters.values())
+
     pbar = tqdm(range(i, args.total_iters))
 
     requires_grad(generator, False)
@@ -101,19 +103,44 @@ def train(args, dataset, generator, discriminator, step = None, i = 0):
     max_step = int(math.log2(args.max_size)) - 2
     final_progress = False
 
+    if i_step is None:
+        i_step = 0
+
+
+
     for i in pbar:
         t0 = time.time()
 
         discriminator.zero_grad()
 
-        alpha = min(1, 1 / args.phase * (used_sample + 1))
+        alpha = min(1, (i_step / (args.iters[resolution] * args.alpha_iters)))
+
+        # alpha = min(1, 1 / args.phase * (used_sample + 1))
 
         if (resolution == args.init_size and args.ckpt_name is None) or final_progress:
             alpha = 1
 
-        if i != 0 and i % args.phase == 0:  
+        if i_step == args.iters[resolution]:  
         # if used_sample > args.phase * args.batch.get(resolution, args.batch_default):
+
+            # save_name = os.path.join(args.experiment_dir, f'{str(i).zfill(6)}_{4 * 2 ** step}.model')
+            # torch.save(
+            #     {
+            #         'generator': generator.module.state_dict(),
+            #         'discriminator': discriminator.module.state_dict(),
+            #         'g_optimizer': g_optimizer.state_dict(),
+            #         'd_optimizer': d_optimizer.state_dict(),
+            #         'g_running': g_running.state_dict(),
+            #         'step': step,
+            #         'i': i - 1,
+            #         'i_step' : i_step - 1,
+            #     },
+            #     save_name
+            # )
+
+
             used_sample = 0
+            i_step = 0
             step += 1
 
             if step > max_step:
@@ -137,19 +164,22 @@ def train(args, dataset, generator, discriminator, step = None, i = 0):
             )
             data_loader = iter(loader)
 
-            save_name = os.path.join(args.experiment_dir, f'train_step-{ckpt_step}.model')
-            torch.save(
-                {
-                    'generator': generator.module.state_dict(),
-                    'discriminator': discriminator.module.state_dict(),
-                    'g_optimizer': g_optimizer.state_dict(),
-                    'd_optimizer': d_optimizer.state_dict(),
-                    'g_running': g_running.state_dict(),
-                    'step': step,
-                    'i': i,
-                },
-                save_name
-            )
+            
+            # save_name = os.path.join(args.experiment_dir, f'train_step-{ckpt_step}.model')
+            # torch.save(
+            #     {
+            #         'generator': generator.module.state_dict(),
+            #         'discriminator': discriminator.module.state_dict(),
+            #         'g_optimizer': g_optimizer.state_dict(),
+            #         'd_optimizer': d_optimizer.state_dict(),
+            #         'g_running': g_running.state_dict(),
+            #         'step': step,
+            #         'i': i,
+            #         'i_step' : i_step,
+
+            #     },
+            #     save_name
+            # )
 
             adjust_lr(g_optimizer, args.lr.get(resolution, 0.001))
             adjust_lr(d_optimizer, args.lr.get(resolution, 0.001))
@@ -174,12 +204,12 @@ def train(args, dataset, generator, discriminator, step = None, i = 0):
         b_size = real_image.size(0)
         real_image = real_image.cuda()
 
-        if args.loss == 'wgan-gp':
+        if args.loss == 'wgan-gp' and not args.no_use_gan:
             real_predict = discriminator(real_image, step=step, alpha=alpha)
             real_predict = real_predict.mean() - 0.001 * (real_predict ** 2).mean()
             (-real_predict).backward()
 
-        elif args.loss == 'r1':
+        elif args.loss == 'r1' and not args.no_use_gan:
             real_image.requires_grad = True
             real_scores = discriminator(real_image, step=step, alpha=alpha)
             real_predict = F.softplus(-real_scores).mean()
@@ -213,7 +243,7 @@ def train(args, dataset, generator, discriminator, step = None, i = 0):
         fake_image, _ = generator(img_enc, gen_in1, step=step, alpha=alpha)
         fake_predict = discriminator(fake_image, step=step, alpha=alpha)
 
-        if args.loss == 'wgan-gp':
+        if args.loss == 'wgan-gp' and not args.no_use_gan:
             fake_predict = fake_predict.mean()
             fake_predict.backward()
 
@@ -233,7 +263,7 @@ def train(args, dataset, generator, discriminator, step = None, i = 0):
                 grad_loss_val = grad_penalty.item()
                 disc_loss_val = (-real_predict + fake_predict).item()
 
-        elif args.loss == 'r1':
+        elif args.loss == 'r1' and not args.no_use_gan:
             fake_predict = F.softplus(fake_predict).mean()
             fake_predict.backward()
             if i%10 == 0:
@@ -251,28 +281,28 @@ def train(args, dataset, generator, discriminator, step = None, i = 0):
 
             predict = discriminator(fake_image, step=step, alpha=alpha)
 
+            loss = 0
 
-
-            if args.loss == 'wgan-gp':
+            if args.loss == 'wgan-gp' and not args.no_use_gan:
                 loss = -predict.mean()
 
-            elif args.loss == 'r1':
+            elif args.loss == 'r1' and not args.no_use_gan:
                 loss = F.softplus(-predict).mean()
 
-            if i%10 == 0:
+            if i%10 == 0 and not args.no_use_gan:
                 gen_loss_val = loss.item()
             
             if args.lambda_cls != 0:
-                cls_loss = classifier_loss(classifier, img_id_from)
-                loss += args.lambda_cls * cls_loss
+                cls_loss = args.lambda_cls * classifier_loss(classifier, img_id_from)
+                loss += cls_loss
 
             if args.lambda_idt != 0:
-                idt_loss = identity_loss(fake_image, img_from)
-                loss += args.lambda_idt * idt_loss
+                idt_loss = args.lambda_idt * identity_loss(fake_image, img_from)
+                loss += idt_loss
 
             if args.lambda_prcp != 0:
-                prcp_loss = perceptual_loss(fake_image, img_from)
-                loss += args.lambda_prcp * prcp_loss
+                prcp_loss = args.lambda_prcp * perceptual_loss(fake_image, img_from)
+                loss += prcp_loss
 
             loss.backward()
             g_optimizer.step()
@@ -308,7 +338,7 @@ def train(args, dataset, generator, discriminator, step = None, i = 0):
                 range=(-1, 1),
             )
 
-        if (i + 1) % args.save_iters == 0:
+        if (i + 1) % args.save_iters == 0 or i_step + 1 == args.iters[resolution]:
 
             save_name = os.path.join(args.experiment_dir, f'{str(i + 1).zfill(6)}_{4 * 2 ** step}.model')
             torch.save(
@@ -320,6 +350,7 @@ def train(args, dataset, generator, discriminator, step = None, i = 0):
                     'g_running': g_running.state_dict(),
                     'step': step,
                     'i': i,
+                    'i_step' : i_step,
                 },
                 save_name
             )
@@ -327,9 +358,11 @@ def train(args, dataset, generator, discriminator, step = None, i = 0):
 
 
         state_msg = (
-            f'Iters: {i + 1}; Iter time: {(time.time() - t0):.2f}; Size: {4 * 2 ** step}; G: {gen_loss_val:.3f}; D: {disc_loss_val:.3f};'
-            f' Grad: {grad_loss_val:.3f}; Alpha: {alpha:.5f}'
+            f'Iters: {i + 1}; Iter time: {(time.time() - t0):.2f}; Size: {4 * 2 ** step}'
         )
+        if not args.no_use_gan:
+            state_msg += f'; G: {gen_loss_val:.3f}; D: {disc_loss_val:.3f}; Grad: {grad_loss_val:.3f}'
+        state_msg += f'; Alpha: {alpha:.5f}'
         if args.lambda_idt != 0:
             state_msg += f'; idt_loss: {idt_loss.item():.3f}'
         if args.lambda_cls != 0:
@@ -337,6 +370,7 @@ def train(args, dataset, generator, discriminator, step = None, i = 0):
         if args.lambda_prcp != 0:
             state_msg += f'; prcp_loss: {prcp_loss.item():.3f}'
 
+        i_step += 1
         pbar.set_description(state_msg)
 
 
@@ -360,6 +394,7 @@ if __name__ == '__main__':
     parser.add_argument('--init_size', default=8, type=int, help='initial image size')
     parser.add_argument('--max_size', default=256, type=int, help='max image size')
     parser.add_argument('--code_size', default=512, type=int)
+    parser.add_argument('--n_mlp', default=None, type=int)
     parser.add_argument('--lambda_cls', default = 0, type = float)
     parser.add_argument('--lambda_idt', default = 0, type = float)
     parser.add_argument('--lambda_prcp', default = 0, type = float)
@@ -367,10 +402,15 @@ if __name__ == '__main__':
     parser.add_argument('--no_from_rgb_activate', action='store_true', help='use activate in from_rgb (original implementation)')
     parser.add_argument('--path_vgg_weights', type = str, default = "vgg_weights")
     parser.add_argument('--prefix_vgg_weights', type = str, default = "VGG_13")
+    parser.add_argument('--alpha_iters', type = float, default = 0.5)
+    parser.add_argument('--no_use_gan', action = 'store_true')
+
 
     parser.add_argument('--ckpt_name', default=None, type=str, help='load from previous checkpoints')
     
     parser.add_argument('--mixing', action='store_true', help='use mixing regularization')
+
+    parser.add_argument('--params_file', type = str, default = 'params/default_iter_params')
     
     args = parser.parse_args()
     args.experiment_dir = os.path.join("./checkpoints", args.name)
@@ -388,11 +428,11 @@ if __name__ == '__main__':
 
 
 
-    generator = nn.DataParallel(StyledGenerator(args.code_size, classes = dataset.total_ids, use_cls = args.lambda_cls != 0)).cuda()
+    generator = nn.DataParallel(StyledGenerator(args.code_size, classes = dataset.total_ids, use_cls = args.lambda_cls != 0, n_mlp = args.n_mlp)).cuda()
     discriminator = nn.DataParallel(
         Discriminator(from_rgb_activate=not args.no_from_rgb_activate)
     ).cuda()
-    g_running = StyledGenerator(args.code_size, classes = dataset.total_ids, use_cls = args.lambda_cls != 0).cuda()
+    g_running = StyledGenerator(args.code_size, classes = dataset.total_ids, use_cls = args.lambda_cls != 0, n_mlp = args.n_mlp).cuda()
     g_running.train(False)
 
     g_optimizer = optim.Adam(
@@ -401,14 +441,18 @@ if __name__ == '__main__':
     g_optimizer.add_param_group({'params': generator.module.synt_img_style.parameters()})
     if args.lambda_cls != 0:
         g_optimizer.add_param_group({'params': generator.module.classifier_on_style.parameters()})
+    if args.n_mlp is not None:
+        g_optimizer.add_param_group({'params': generator.module.style.parameters()})
     g_optimizer.add_param_group({'params': generator.module.init_noise.parameters()})
 
     d_optimizer = optim.Adam(discriminator.parameters(), lr=args.lr, betas=(0.0, 0.99))
 
     accumulate(g_running, generator.module, 0)
 
+    
     step = None
     i = 0
+    i_step = None
     if args.ckpt_name is not None:
         # ckpt_name = os.path.join("./checkpoints", args.ckpt_name)
         ckpt = torch.load(args.ckpt_name)
@@ -420,10 +464,24 @@ if __name__ == '__main__':
         d_optimizer.load_state_dict(ckpt['d_optimizer'])
         step = ckpt['step']
         i = ckpt['i'] + 1
+        i_step = ckpt['i_step'] + 1
 
     if args.sched:
         args.lr = {128: 0.0015, 256: 0.002}
-        args.batch = {4: 128, 8: 64, 16: 64, 32: 32, 64: 32, 128: 16, 256: 4}
+        args.batch = {}
+        args.iters = {}
+        if args.params_file == '':
+            args.batch = {4 : 128,   8 : 64,    16 : 64,    32 : 32,    64 : 16,    128 : 8,     256 : 4}
+            args.iters = {4 : 0  ,   8 : 10000, 16 : 10000, 32 : 20000, 64 : 40000, 128 : 80000, 256 : 160000}
+        else:
+            with open(args.params_file, 'r') as f:
+                for line in f.readlines():
+                    resolution = int(line.split()[0])
+                    bs = int(line.split()[1])
+                    iters = int(line.split()[2])
+                    args.batch[resolution] = bs
+                    args.iters[resolution] = iters
+        # args.iters = {4 : 0, 8 : 10, 16 : 10, 32 : 20, 64 : 10, 128 : 10, 256 : 10}
 
     else:
         args.lr = {}
@@ -433,4 +491,4 @@ if __name__ == '__main__':
 
     args.batch_default = 32
 
-    train(args, dataset, generator, discriminator, step, i)
+    train(args, dataset, generator, discriminator, step, i, i_step)

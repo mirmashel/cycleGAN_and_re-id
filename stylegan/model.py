@@ -449,9 +449,64 @@ class Generator(nn.Module):
 
         return out
 
+class OrigStyledGenerator(nn.Module):
+    def __init__(self, code_dim=512, n_mlp=8):
+        super().__init__()
+
+        self.generator = Generator(code_dim)
+
+        layers = [PixelNorm()]
+        for i in range(n_mlp):
+            layers.append(EqualLinear(code_dim, code_dim))
+            layers.append(nn.LeakyReLU(0.2))
+
+        self.style = nn.Sequential(*layers)
+
+    def forward(
+        self,
+        input,
+        noise=None,
+        step=0,
+        alpha=-1,
+        mean_style=None,
+        style_weight=0,
+        mixing_range=(-1, -1),
+    ):
+        styles = []
+        if type(input) not in (list, tuple):
+            input = [input]
+
+        for i in input:
+            styles.append(self.style(i))
+
+        batch = input[0].shape[0]
+
+        if noise is None:
+            noise = []
+
+            for i in range(step + 1):
+                size = 4 * 2 ** i
+                noise.append(torch.randn(batch, 1, size, size, device=input[0].device))
+
+        if mean_style is not None:
+            styles_norm = []
+
+            for style in styles:
+                styles_norm.append(mean_style + style_weight * (style - mean_style))
+
+            styles = styles_norm
+
+        return self.generator(styles, noise, step, alpha, mixing_range=mixing_range)
+
+    def mean_style(self, input):
+        style = self.style(input).mean(0, keepdim=True)
+
+        return style
+
+        
 
 class StyledGenerator(nn.Module):
-    def __init__(self, code_dim=512, n_mlp=8, classes = 700, use_cls = True):
+    def __init__(self, code_dim=512, n_mlp=None, classes = 700, use_cls = True):
         super().__init__()
 
         self.generator = Generator(code_dim)
@@ -478,6 +533,18 @@ class StyledGenerator(nn.Module):
             nn.LeakyReLU(0.2),
             EqualLinear(code_dim, code_dim),
         )
+
+        self.use_mlp = False
+        if n_mlp is not None:
+            self.use_mlp = True
+            layers = [PixelNorm()]
+            for i in range(n_mlp):
+                layers.append(EqualLinear(code_dim, code_dim))
+                layers.append(nn.LeakyReLU(0.2))
+
+            self.style = nn.Sequential(*layers)
+
+
 
         self.use_cls = classes is not None and use_cls
 
@@ -512,7 +579,10 @@ class StyledGenerator(nn.Module):
         img_code = self.synt_img_style(img_enc)
 
         for i in input:
-            styles.append(img_code)
+            if self.use_mlp:
+                styles.append(self.style(img_code))
+            else:
+                styles.append(img_code)
 
         batch = input[0].shape[0]
 
