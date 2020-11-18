@@ -20,6 +20,23 @@ from model import StyledGenerator, Discriminator, PerceptualLoss_v1, OrigStyledG
 import os
 import time
 
+import skimage.transform as sk_transform
+import skimage.io as io
+
+def save_resized_images(save_name, images):
+    num_cols = 4
+    num_rows = 4
+    target_shape = (120, 50)
+    result_image = np.zeros((num_rows * target_shape[0], num_cols * target_shape[1], 3), dtype = np.float32)
+    for nr in range(num_rows):
+        for nc in range(num_cols):
+            im = torch.clamp(images[nr][nc], -1, 1).numpy()
+            im = (np.transpose(im, (1, 2, 0)) + 1) / 2.0 * 255.0
+            im = sk_transform.resize(im, target_shape)
+            result_image[target_shape[0] * nr:target_shape[0] * (nr + 1), target_shape[1] * nc:target_shape[1] * (nc + 1), :] = im[:, :, :]
+
+    io.imsave(save_name, result_image.astype(np.uint8))
+
 def requires_grad(model, flag=True):
     for p in model.parameters():
         p.requires_grad = flag
@@ -252,13 +269,14 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
             save_name = os.path.join(args.experiment_dir, "sample")
             os.makedirs(save_name, exist_ok = True)
             save_name = os.path.join(save_name, f'{str(i + 1).zfill(6)}.png')
-            utils.save_image(
-                torch.cat(images, 0),
-                save_name,
-                nrow=gen_i,
-                normalize=True,
-                range=(-1, 1),
-            )
+            save_resized_images(save_name, images)
+            # utils.save_image(
+            #     torch.cat(images, 0),
+            #     save_name,
+            #     nrow=gen_i,
+            #     normalize=True,
+            #     range=(-1, 1),
+            # )
 
             if args.multisize_vis:
                 save_name = os.path.join(args.experiment_dir, "sample/multi_size")

@@ -1,10 +1,10 @@
-python orig_train.py --name orig_stylegan_pretrained_r1 --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
-	--n_mlp 8 \
-	--sched --sample_iters 1000 --save_iters 10000 --multisize_vis --use_face_weights --loss r1 # --ckpt_name ./checkpoints/orig_stylegan/130000_64.model 
-
-# python orig_train.py --name orig_stylegan_pretrained --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
+# python orig_train.py --name orig_stylegan_pretrained_r1 --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
 # 	--n_mlp 8 \
-# 	--sched --sample_iters 1000 --save_iters 10000 --multisize_vis --use_face_weights 
+# 	--sched --sample_iters 1000 --save_iters 10000 --multisize_vis --use_face_weights --loss r1 # --ckpt_name ./checkpoints/orig_stylegan/130000_64.model 
+
+python orig_train.py --name orig_stylegan_pretrained --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
+	--n_mlp 8 \
+	--sched --sample_iters 1000 --save_iters 10000 --multisize_vis --use_face_weights --ckpt_name ./checkpoints/orig_stylegan_pretrained/110000_128.model 
 
 # python orig_train.py --name orig_stylegan --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
 # 	--n_mlp 8 \
