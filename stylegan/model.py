@@ -359,8 +359,9 @@ class StyledConvBlock(nn.Module):
         self.adain2 = AdaptiveInstanceNorm(out_channel, style_dim)
         self.lrelu2 = nn.LeakyReLU(0.2)
 
-    def forward(self, input, style, noise):
+    def forward(self, input, style, noise): # style.size = (bs, 512), noise.size = (bs, 1, h, w)
         out = self.conv1(input)
+        # print(style.size(), noise.size())
         out = self.noise1(out, noise)
         out = self.lrelu1(out)
         out = self.adain1(out, style)
@@ -371,6 +372,21 @@ class StyledConvBlock(nn.Module):
         out = self.adain2(out, style)
 
         return out
+
+    # for inversion in W+ space
+    def forward2(self, input, style, noise): # style.size = (bs, 2, 512), noise.size = (bs, 1, h, w)
+        out = self.conv1(input)
+        out = self.noise1(out, noise)
+        out = self.lrelu1(out)
+        out = self.adain1(out, style[:,0,:])
+
+        out = self.conv2(out)
+        out = self.noise2(out, noise)
+        out = self.lrelu2(out)
+        out = self.adain2(out, style[:,1,:])
+
+        return out
+
 
 
 class Generator(nn.Module):
@@ -449,6 +465,49 @@ class Generator(nn.Module):
 
         return out
 
+    def forward2(self, style, noise, step=0, alpha=-1, mixing_range=(-1, -1)): # style.size = (bs, 14, 512)
+        # print(len(style), style[0].size())
+        out = noise[0]
+
+        if len(style) < 2:
+            inject_index = [len(self.progression) + 1]
+
+        else:
+            inject_index = sorted(random.sample(list(range(step)), len(style) - 1))
+
+        crossover = 0
+
+        for i, (conv, to_rgb) in enumerate(zip(self.progression, self.to_rgb)):
+            if mixing_range == (-1, -1):
+                if crossover < len(inject_index) and i > inject_index[crossover]:
+                    crossover = min(crossover + 1, len(style))
+
+                style_step = style[crossover][:, i*2:i*2+2, :]
+
+            else:
+                if mixing_range[0] <= i <= mixing_range[1]:
+                    style_step = style[1]
+
+                else:
+                    style_step = style[0]
+
+            if i > 0 and step > 0:
+                out_prev = out
+                
+            out = conv.forward2(out, style_step, noise[i])
+
+            if i == step:
+                out = to_rgb(out)
+
+                if i > 0 and 0 <= alpha < 1:
+                    skip_rgb = self.to_rgb[i - 1](out_prev)
+                    skip_rgb = F.interpolate(skip_rgb, scale_factor=2, mode='nearest')
+                    out = (1 - alpha) * skip_rgb + alpha * out
+
+                break
+
+        return out
+
 class OrigStyledGenerator(nn.Module):
     def __init__(self, code_dim=512, n_mlp=8):
         super().__init__()
@@ -500,8 +559,46 @@ class OrigStyledGenerator(nn.Module):
 
     def mean_style(self, input):
         style = self.style(input).mean(0, keepdim=True)
-
         return style
+
+    def forward2(
+        self,
+        input,
+        noise=None,
+        step=0,
+        alpha=-1,
+        mean_style=None,
+        style_weight=0,
+        mixing_range=(-1, -1),
+    ):
+        styles = [input]
+        input = [input]
+        # print(input[0].size())
+
+        # if type(input) not in (list, tuple):
+        #     input = [input]
+
+        # for i in input:
+        #     styles.append(self.style(i))
+
+        batch = input[0].shape[0]
+
+        if noise is None:
+            noise = []
+
+            for i in range(step + 1):
+                size = 4 * 2 ** i
+                noise.append(torch.randn(batch, 1, size, size, device=input[0].device))
+
+        if mean_style is not None:
+            styles_norm = []
+
+            for style in styles:
+                styles_norm.append(mean_style + style_weight * (style - mean_style))
+
+            styles = styles_norm
+
+        return self.generator.forward2(styles, noise, step, alpha, mixing_range=mixing_range)
 
         
 
@@ -564,43 +661,28 @@ class StyledGenerator(nn.Module):
     def forward(
         self,
         img_enc,
-        input,
         noise=None,
         step=0,
         alpha=-1,
-        mean_style=None,
-        style_weight=0,
-        mixing_range=(-1, -1)
     ):
         styles = []
-        if type(input) not in (list, tuple):
-            input = [input]
 
         img_code = self.synt_img_style(img_enc)
 
-        for i in input:
-            if self.use_mlp:
-                styles.append(self.style(img_code))
-            else:
-                styles.append(img_code)
+        if self.use_mlp:
+            styles.append(self.style(img_code))
+        else:
+            styles.append(img_code)
 
-        batch = input[0].shape[0]
+        batch = img_code.shape[0]
 
         if noise is None:
             noise = []
 
             for i in range(step + 1):
                 size = 4 * 2 ** i
-                noise.append(torch.randn(batch, 1, size, size, device=input[0].device))
-            noise[0] = self.init_noise(img_code).view(-1, 1, 4, 4)
-
-        if mean_style is not None:
-            styles_norm = []
-
-            for style in styles:
-                styles_norm.append(mean_style + style_weight * (style - mean_style))
-
-            styles = styles_norm
+                noise.append(torch.randn(batch, 1, size, size, device=img_code.device))
+            # noise[0] = self.init_noise(img_code).view(-1, 1, 4, 4)
 
         if self.classifier_on_style is not None:
             classifier = self.classifier_on_style(img_code)
@@ -608,7 +690,7 @@ class StyledGenerator(nn.Module):
             classifier = None
         
 
-        generator_output = self.generator(styles, noise, step, alpha, mixing_range=mixing_range)
+        generator_output = self.generator(styles, noise, step, alpha)
         return generator_output, classifier
 
     def mean_style(self, input):

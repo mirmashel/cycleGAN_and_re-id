@@ -20,14 +20,16 @@ import time
 import skimage.transform as sk_transform
 import skimage.io as io
 
+from pytorch_msssim import MSSSIM as Msssim
+
 def save_resized_images(save_name, images):
-    num_cols = 4
-    num_rows = 4
+    num_cols = 7
+    num_rows = 3
     target_shape = (120, 50)
     result_image = np.zeros((num_rows * target_shape[0], num_cols * target_shape[1], 3), dtype = np.float32)
     for nr in range(num_rows):
         for nc in range(num_cols):
-            im = torch.clamp(images[nr][nc], -1, 1).numpy()
+            im = torch.clamp(images[nr * num_cols + nc][0], -1, 1).numpy()
             im = (np.transpose(im, (1, 2, 0)) + 1) / 2.0 * 255.0
             im = sk_transform.resize(im, target_shape)
             result_image[target_shape[0] * nr:target_shape[0] * (nr + 1), target_shape[1] * nc:target_shape[1] * (nc + 1), :] = im[:, :, :]
@@ -66,9 +68,9 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
         step = int(math.log2(args.init_size)) - 2
 
 
-    gen_i, gen_j = (4, 4)
+    gen_i, gen_j = (7, 3)
 
-    idxs = np.random.randint(low = 0, high = len(dataset), size = (16, ))
+    idxs = np.random.randint(low = 0, high = len(dataset), size = (21, ))
 
     fixed_batch = [dataset[idx]['img_enc'].unsqueeze(0) for idx in idxs]
     save_name = os.path.join(args.experiment_dir, "sample")
@@ -76,14 +78,6 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
     save_name = os.path.join(save_name, f'{str(0).zfill(6)}.png')
 
     save_resized_images(save_name, fixed_batch)
-
-    # utils.save_image(
-    #     torch.cat(fixed_batch, 0),
-    #     save_name,
-    #     nrow=gen_i,
-    #     normalize=True,
-    #     range=(-1, 1),
-    # )
 
     resolution = 4 * 2 ** step
 
@@ -96,6 +90,8 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
         for res in (8, 16, 32, 64, 128, 256):
             perceptual_losses[res] = PerceptualLoss_v1(resolution = res, load_path = args.path_vgg_weights, load_prefix = args.prefix_vgg_weights)
         perceptual_loss = perceptual_losses[resolution].cuda()
+    if args.lambda_msssim != 0:
+        msssim_loss = Msssim()
 
     
     loader = sample_data(
@@ -135,29 +131,11 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
 
         alpha = min(1, (i_step / (args.iters[resolution] * args.alpha_iters)))
 
-        # alpha = min(1, 1 / args.phase * (used_sample + 1))
 
         if (resolution == args.init_size and args.ckpt_name is None) or final_progress:
             alpha = 1
 
-        if i_step == args.iters[resolution]:  
-        # if used_sample > args.phase * args.batch.get(resolution, args.batch_default):
-
-            # save_name = os.path.join(args.experiment_dir, f'{str(i).zfill(6)}_{4 * 2 ** step}.model')
-            # torch.save(
-            #     {
-            #         'generator': generator.module.state_dict(),
-            #         'discriminator': discriminator.module.state_dict(),
-            #         'g_optimizer': g_optimizer.state_dict(),
-            #         'd_optimizer': d_optimizer.state_dict(),
-            #         'g_running': g_running.state_dict(),
-            #         'step': step,
-            #         'i': i - 1,
-            #         'i_step' : i_step - 1,
-            #     },
-            #     save_name
-            # )
-
+        if i_step == args.iters[resolution]:
 
             used_sample = 0
             i_step = 0
@@ -183,23 +161,6 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
                 dataset, args.batch.get(resolution, args.batch_default), resolution
             )
             data_loader = iter(loader)
-
-            
-            # save_name = os.path.join(args.experiment_dir, f'train_step-{ckpt_step}.model')
-            # torch.save(
-            #     {
-            #         'generator': generator.module.state_dict(),
-            #         'discriminator': discriminator.module.state_dict(),
-            #         'g_optimizer': g_optimizer.state_dict(),
-            #         'd_optimizer': d_optimizer.state_dict(),
-            #         'g_running': g_running.state_dict(),
-            #         'step': step,
-            #         'i': i,
-            #         'i_step' : i_step,
-
-            #     },
-            #     save_name
-            # )
 
             adjust_lr(g_optimizer, args.lr.get(resolution, 0.001))
             adjust_lr(d_optimizer, args.lr.get(resolution, 0.001))
@@ -246,21 +207,8 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
             if i%10 == 0:
                 grad_loss_val = grad_penalty.item()
 
-        if args.mixing and random.random() < 0.9:
-            gen_in11, gen_in12, gen_in21, gen_in22 = torch.randn(
-                4, b_size, args.code_size, device='cuda'
-            ).chunk(4, 0)
-            gen_in1 = [gen_in11.squeeze(0), gen_in12.squeeze(0)]
-            gen_in2 = [gen_in21.squeeze(0), gen_in22.squeeze(0)]
 
-        else:
-            gen_in1, gen_in2 = torch.randn(2, b_size, args.code_size, device='cuda').chunk(
-                2, 0
-            )
-            gen_in1 = gen_in1.squeeze(0)
-            gen_in2 = gen_in2.squeeze(0)
-
-        fake_image, _ = generator(img_enc, gen_in1, step=step, alpha=alpha)
+        fake_image, _ = generator(img_enc, step=step, alpha=alpha)
         fake_predict = discriminator(fake_image, step=step, alpha=alpha)
 
         if args.loss == 'wgan-gp' and not args.no_use_gan:
@@ -297,7 +245,7 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
             requires_grad(generator, True)
             requires_grad(discriminator, False)
 
-            fake_image, classifier = generator(img_enc, gen_in2, step=step, alpha=alpha)
+            fake_image, classifier = generator(img_enc, step=step, alpha=alpha)
 
             predict = discriminator(fake_image, step=step, alpha=alpha)
 
@@ -324,6 +272,10 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
                 prcp_loss = args.lambda_prcp * perceptual_loss(fake_image, img_from)
                 loss += prcp_loss
 
+            if args.lambda_msssim != 0:
+                msssim_loss_value = args.lambda_msssim * (1 - msssim_loss((fake_image + 1) / 2, (img_from + 1) / 2))
+                loss += msssim_loss_value
+
             loss.backward()
             g_optimizer.step()
             accumulate(g_running, generator.module)
@@ -338,14 +290,12 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
         if (i + 1) % args.sample_iters == 0:
             images = []
 
-            gen_i, gen_j = args.gen_sample.get(resolution, (4, 4))
-
             with torch.no_grad():
-                for k in range(gen_i):
-                    img_in_batch = torch.cat(fixed_batch[k * gen_j: (k + 1) * gen_j]).cuda()
+                for f_im in fixed_batch:
                     images.append(
-                        g_running(img_in_batch, torch.randn(gen_j, args.code_size).cuda(), step=step, alpha=alpha)[0].data.cpu()
+                        g_running(f_im.cuda(), step=step, alpha=alpha)[0].data.cpu()
                     )
+
 
             save_name = os.path.join(args.experiment_dir, "sample")
             os.makedirs(save_name, exist_ok = True)
@@ -353,13 +303,6 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
 
             save_resized_images(save_name, images)
 
-            # utils.save_image(
-            #     torch.cat(images, 0),
-            #     save_name,
-            #     nrow=gen_i,
-            #     normalize=True,
-            #     range=(-1, 1),
-            # )
 
         if (i + 1) % args.save_iters == 0 or i_step + 1 == args.iters[resolution]:
 
@@ -392,6 +335,8 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
             state_msg += f'; cls_loss: {cls_loss.item():.3f}'
         if args.lambda_prcp != 0:
             state_msg += f'; prcp_loss: {prcp_loss.item():.3f}'
+        if args.lambda_msssim != 0:
+            state_msg += f'; msssim_loss: {msssim_loss_value.item():.3f}'
 
         i_step += 1
         pbar.set_description(state_msg)
@@ -421,6 +366,7 @@ if __name__ == '__main__':
     parser.add_argument('--lambda_cls', default = 0, type = float)
     parser.add_argument('--lambda_idt', default = 0, type = float)
     parser.add_argument('--lambda_prcp', default = 0, type = float)
+    parser.add_argument('--lambda_msssim', default = 0, type = float)
     parser.add_argument('--loss', type=str, default='wgan-gp', choices=['wgan-gp', 'r1'], help='class of gan loss')
     parser.add_argument('--no_from_rgb_activate', action='store_true', help='use activate in from_rgb (original implementation)')
     parser.add_argument('--path_vgg_weights', type = str, default = "vgg_weights")
