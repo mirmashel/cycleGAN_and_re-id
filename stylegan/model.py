@@ -374,16 +374,18 @@ class StyledConvBlock(nn.Module):
         return out
 
     # for inversion in W+ space
-    def forward2(self, input, style, noise): # style.size = (bs, 2, 512), noise.size = (bs, 1, h, w)
+    def forward2(self, input, style, noise, adain = True): # style.size = (bs, 2, 512), noise.size = (bs, 1, h, w)
         out = self.conv1(input)
-        out = self.noise1(out, noise)
+        # out = self.noise1(out, noise)
         out = self.lrelu1(out)
-        out = self.adain1(out, style[:,0,:])
+        if adain:
+            out = self.adain1(out, style[:,0,:])
 
         out = self.conv2(out)
-        out = self.noise2(out, noise)
+        # out = self.noise2(out, noise)
         out = self.lrelu2(out)
-        out = self.adain2(out, style[:,1,:])
+        if adain:
+            out = self.adain2(out, style[:,1,:])
 
         return out
 
@@ -465,7 +467,7 @@ class Generator(nn.Module):
 
         return out
 
-    def forward2(self, style, noise, step=0, alpha=-1, mixing_range=(-1, -1)): # style.size = (bs, 14, 512)
+    def forward2(self, style, noise, step=0, alpha=-1, mixing_range=(-1, -1), adain_count = 14): # style.size = (bs, 14, 512)
         # print(len(style), style[0].size())
         out = noise[0]
 
@@ -493,8 +495,8 @@ class Generator(nn.Module):
 
             if i > 0 and step > 0:
                 out_prev = out
-                
-            out = conv.forward2(out, style_step, noise[i])
+
+            out = conv.forward2(out, style_step, noise[i], (i + 1) * 2 <= adain_count)
 
             if i == step:
                 out = to_rgb(out)
@@ -603,33 +605,46 @@ class OrigStyledGenerator(nn.Module):
         
 
 class StyledGenerator(nn.Module):
-    def __init__(self, code_dim=512, n_mlp=None, classes = 700, use_cls = True):
+    def __init__(self, code_dim=512, n_mlp=None, classes = 700, use_cls = True, static_noise = False, active_style_layers = 14, decoder = 'base', code_first = False):
         super().__init__()
 
         self.generator = Generator(code_dim)
 
-        self.synt_img_style = nn.Sequential(
-            EqualConv2d(3, 32, 3, padding=1),
-            nn.LeakyReLU(0.2),
-            EqualConv2d(32, 64, 4, padding=1),
-            nn.MaxPool2d(2, stride=2),
-            nn.LeakyReLU(0.2),
-            EqualConv2d(64, 128, 4, padding=1),
-            nn.MaxPool2d(2, stride=2),
-            nn.LeakyReLU(0.2),
-            EqualConv2d(128, 256, 3, padding=1),
-            nn.MaxPool2d(2, stride=2),
-            nn.LeakyReLU(0.2),
-            EqualConv2d(256, 512, 4, padding=1),
-            nn.LeakyReLU(0.2),
-            EqualConv2d(512, code_dim, 4, padding=1),
-            nn.AdaptiveMaxPool2d((1,1)),
-            nn.Flatten(),
-            nn.LeakyReLU(0.2),
-            EqualLinear(code_dim, code_dim),
-            nn.LeakyReLU(0.2),
-            EqualLinear(code_dim, code_dim),
-        )
+
+        if decoder == 'base':
+            self.synt_img_style = nn.Sequential(
+                EqualConv2d(3, 32, 3, padding=1),
+                nn.LeakyReLU(0.2),
+                EqualConv2d(32, 64, 4, padding=1),
+                nn.MaxPool2d(2, stride=2),
+                nn.LeakyReLU(0.2),
+                EqualConv2d(64, 128, 4, padding=1),
+                nn.MaxPool2d(2, stride=2),
+                nn.LeakyReLU(0.2),
+                EqualConv2d(128, 256, 3, padding=1),
+                nn.MaxPool2d(2, stride=2),
+                nn.LeakyReLU(0.2),
+                EqualConv2d(256, 512, 4, padding=1),
+                nn.LeakyReLU(0.2),
+                EqualConv2d(512, code_dim, 4, padding=1),
+                nn.AdaptiveMaxPool2d((1,1)),
+                nn.Flatten(),
+                nn.LeakyReLU(0.2),
+                EqualLinear(code_dim, code_dim),
+                nn.LeakyReLU(0.2),
+                EqualLinear(code_dim, code_dim),
+            )
+        elif decoder == 'resnet50':
+            self.synt_img_style = models.resnet50(pretrained = True)
+            self.synt_img_style.fc = nn.Linear(2048, code_dim)
+            # self.synt_img_style = nn.Sequential(*(list(self.synt_img_style.children())[:-1]), nn.Flatten(), nn.Linear(2048, code_dim))
+
+        elif decoder == 'resnet34':
+            self.synt_img_style = models.resnet34(pretrained = True)
+            self.synt_img_style.fc = nn.Linear(512, code_dim)
+            # self.synt_img_style = nn.Sequential(*(list(self.synt_img_style.children())[:-1]), nn.Flatten(), nn.Linear(512, code_dim))
+
+
 
         self.use_mlp = False
         if n_mlp is not None:
@@ -657,6 +672,12 @@ class StyledGenerator(nn.Module):
 
         self.init_noise = nn.Sequential(EqualLinear(code_dim, 16))
 
+        self.active_style_layers = active_style_layers
+
+        self.static_noise = static_noise
+
+        self.code_first = code_first
+
 
     def forward(
         self,
@@ -681,16 +702,24 @@ class StyledGenerator(nn.Module):
 
             for i in range(step + 1):
                 size = 4 * 2 ** i
-                noise.append(torch.randn(batch, 1, size, size, device=img_code.device))
-            # noise[0] = self.init_noise(img_code).view(-1, 1, 4, 4)
+                if self.static_noise:
+                    noise.append(torch.zeros(batch, 1, size, size, device=img_code.device))
+                else:
+                    noise.append(torch.randn(batch, 1, size, size, device=img_code.device))
+            if self.code_first:
+                noise[0] = self.init_noise(img_code).view(-1, 1, 4, 4)
 
         if self.classifier_on_style is not None:
             classifier = self.classifier_on_style(img_code)
         else:
             classifier = None
-        
 
-        generator_output = self.generator(styles, noise, step, alpha)
+        if self.active_style_layers == 14:
+            generator_output = self.generator(styles, noise, step, alpha)
+        else:
+            styles[0] = torch.cat([styles[0].unsqueeze(1) for i in range(14)], 1)
+            generator_output = self.generator.forward2(styles, noise, step, alpha, adain_count = self.active_style_layers)
+
         return generator_output, classifier
 
     def mean_style(self, input):

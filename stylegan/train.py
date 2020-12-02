@@ -52,7 +52,7 @@ def accumulate(model1, model2, decay=0.999):
 
 def sample_data(dataset, batch_size, image_size=4):
     dataset.resolution = image_size
-    loader = DataLoader(dataset, shuffle=True, batch_size=batch_size, num_workers=1, drop_last=True)
+    loader = DataLoader(dataset, shuffle=True, batch_size=batch_size, num_workers=16, drop_last=True)
 
     return loader
 
@@ -209,9 +209,9 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
 
 
         fake_image, _ = generator(img_enc, step=step, alpha=alpha)
-        fake_predict = discriminator(fake_image, step=step, alpha=alpha)
 
         if args.loss == 'wgan-gp' and not args.no_use_gan:
+            fake_predict = discriminator(fake_image, step=step, alpha=alpha)
             fake_predict = fake_predict.mean()
             fake_predict.backward()
 
@@ -232,6 +232,7 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
                 disc_loss_val = (-real_predict + fake_predict).item()
 
         elif args.loss == 'r1' and not args.no_use_gan:
+            fake_predict = discriminator(fake_image, step=step, alpha=alpha)
             fake_predict = F.softplus(fake_predict).mean()
             fake_predict.backward()
             if i%10 == 0:
@@ -247,14 +248,14 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
 
             fake_image, classifier = generator(img_enc, step=step, alpha=alpha)
 
-            predict = discriminator(fake_image, step=step, alpha=alpha)
-
             loss = 0
 
             if args.loss == 'wgan-gp' and not args.no_use_gan:
+                predict = discriminator(fake_image, step=step, alpha=alpha)
                 loss = -predict.mean()
 
             elif args.loss == 'r1' and not args.no_use_gan:
+                predict = discriminator(fake_image, step=step, alpha=alpha)
                 loss = F.softplus(-predict).mean()
 
             if i%10 == 0 and not args.no_use_gan:
@@ -272,7 +273,7 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
                 prcp_loss = args.lambda_prcp * perceptual_loss(fake_image, img_from)
                 loss += prcp_loss
 
-            if args.lambda_msssim != 0:
+            if args.lambda_msssim != 0 and resolution >= 64:
                 msssim_loss_value = args.lambda_msssim * (1 - msssim_loss((fake_image + 1) / 2, (img_from + 1) / 2))
                 loss += msssim_loss_value
 
@@ -335,7 +336,7 @@ def train(args, dataset, generator, discriminator, step = None, i = 0, i_step = 
             state_msg += f'; cls_loss: {cls_loss.item():.3f}'
         if args.lambda_prcp != 0:
             state_msg += f'; prcp_loss: {prcp_loss.item():.3f}'
-        if args.lambda_msssim != 0:
+        if args.lambda_msssim != 0 and resolution >= 64:
             state_msg += f'; msssim_loss: {msssim_loss_value.item():.3f}'
 
         i_step += 1
@@ -373,6 +374,10 @@ if __name__ == '__main__':
     parser.add_argument('--prefix_vgg_weights', type = str, default = "VGG_13")
     parser.add_argument('--alpha_iters', type = float, default = 0.5)
     parser.add_argument('--no_use_gan', action = 'store_true')
+    parser.add_argument('--static_noise', action = 'store_true')
+    parser.add_argument('--active_styles', type = int, default = 14)
+    parser.add_argument('--decoder', type = str, default = 'base')
+    parser.add_argument('--code_first', action = 'store_true')
 
 
     parser.add_argument('--ckpt_name', default=None, type=str, help='load from previous checkpoints')
@@ -397,11 +402,11 @@ if __name__ == '__main__':
 
 
 
-    generator = nn.DataParallel(StyledGenerator(args.code_size, classes = dataset.total_ids, use_cls = args.lambda_cls != 0, n_mlp = args.n_mlp)).cuda()
+    generator = nn.DataParallel(StyledGenerator(args.code_size, classes = dataset.total_ids, use_cls = args.lambda_cls != 0, n_mlp = args.n_mlp, static_noise = args.static_noise, active_style_layers = args.active_styles, decoder = args.decoder, code_first = args.code_first)).cuda()
     discriminator = nn.DataParallel(
         Discriminator(from_rgb_activate=not args.no_from_rgb_activate)
     ).cuda()
-    g_running = StyledGenerator(args.code_size, classes = dataset.total_ids, use_cls = args.lambda_cls != 0, n_mlp = args.n_mlp).cuda()
+    g_running = StyledGenerator(args.code_size, classes = dataset.total_ids, use_cls = args.lambda_cls != 0, n_mlp = args.n_mlp, static_noise = args.static_noise, active_style_layers = args.active_styles, decoder = args.decoder, code_first = args.code_first).cuda()
     g_running.train(False)
 
     g_optimizer = optim.Adam(
@@ -412,7 +417,8 @@ if __name__ == '__main__':
         g_optimizer.add_param_group({'params': generator.module.classifier_on_style.parameters()})
     if args.n_mlp is not None:
         g_optimizer.add_param_group({'params': generator.module.style.parameters()})
-    g_optimizer.add_param_group({'params': generator.module.init_noise.parameters()})
+    if args.code_first:
+        g_optimizer.add_param_group({'params': generator.module.init_noise.parameters()})
 
     d_optimizer = optim.Adam(discriminator.parameters(), lr=args.lr, betas=(0.0, 0.99))
 
