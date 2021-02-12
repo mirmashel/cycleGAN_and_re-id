@@ -41,7 +41,8 @@ class CycleGANModel(BaseModel):
             parser.add_argument('--lambda_A', type=float, default=10.0, help='weight for cycle loss (A -> B -> A)')
             parser.add_argument('--lambda_B', type=float, default=10.0, help='weight for cycle loss (B -> A -> B)')
             parser.add_argument('--lambda_identity', type=float, default=0.5, help='use identity mapping. Setting lambda_identity other than 0 has an effect of scaling the weight of the identity mapping loss. For example, if the weight of the identity loss should be 10 times smaller than the weight of the reconstruction loss, please set lambda_identity = 0.1')
-            parser.add_argument('--lambda_similarity', type=float, default=0.2, help='similarity preserving loss')
+            parser.add_argument('--lambda_similarity', type=float, default=0.5, help='similarity preserving loss')
+            parser.add_argument('--lambda_perceptual', type=float, default=0.1, help='perceptual loss')
             
         return parser
 
@@ -54,10 +55,13 @@ class CycleGANModel(BaseModel):
         BaseModel.__init__(self, opt)
 
         self.use_SP = opt.isTrain and opt.use_SP
+        self.use_PRCP = opt.isTrain and opt.use_PRCP
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
         self.loss_names = ['D_A', 'G_A', 'cycle_A', 'idt_A', 'D_B', 'G_B', 'cycle_B', 'idt_B']
         if self.use_SP:
             self.loss_names = self.loss_names + ['SP_A', 'SP_B']
+        if self.use_PRCP:
+            self.loss_names += ['PRCP_A', 'PRCP_B']
 
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         visual_names_A = ['real_A', 'fake_B', 'rec_A']
@@ -104,6 +108,8 @@ class CycleGANModel(BaseModel):
             self.criterionIdt = torch.nn.L1Loss()
             if self.use_SP:
                 self.criterionSP = torch.nn.TripletMarginLoss(margin = opt.SP_m)
+            if self.use_PRCP:
+                self.criterionPRCP = networks.define_PRCP(self.gpu_ids)
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
             self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizer_D = torch.optim.Adam(itertools.chain(self.netD_A.parameters(), self.netD_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
@@ -172,6 +178,7 @@ class CycleGANModel(BaseModel):
         lambda_A = self.opt.lambda_A
         lambda_B = self.opt.lambda_B
         lambda_sim = self.opt.lambda_similarity
+        lambda_prcp = self.opt.lambda_perceptual
         # Identity loss
         if lambda_idt > 0:
             # G_A should be identity if real_B is fed: ||G_A(B) - B||
@@ -194,6 +201,13 @@ class CycleGANModel(BaseModel):
             self.loss_SP_A = 0
             self.loss_SP_B = 0
 
+        if self.use_PRCP:
+            self.loss_PRCP_A = self.criterionPRCP(self.fake_B, self.real_A, self.real_B) * lambda_B * lambda_prcp
+            self.loss_PRCP_B = self.criterionPRCP(self.fake_A, self.real_B, self.real_A) * lambda_A * lambda_prcp
+        else:
+            self.loss_PRCP_A = 0
+            self.loss_PRCP_B = 0
+
         # GAN loss D_A(G_A(A))
         self.loss_G_A = self.criterionGAN(self.netD_A(self.fake_B), True)
         # GAN loss D_B(G_B(B))
@@ -203,7 +217,7 @@ class CycleGANModel(BaseModel):
         # Backward cycle loss || G_A(G_B(B)) - B||
         self.loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B) * lambda_B
         # combined loss and calculate gradients
-        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B + self.loss_SP_A + self.loss_SP_B
+        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B + self.loss_SP_A + self.loss_SP_B + self.loss_PRCP_A + self.loss_PRCP_B
         self.loss_G.backward()
 
     def optimize_parameters(self):

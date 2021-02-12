@@ -61,8 +61,55 @@
 
 
 
+# python train.py --name encoder_decoder_v1 --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
+# 	--lambda_cls 0 --lambda_idt 1 --lambda_prcp 0 --lambda_msssim 0 --no_use_gan --n_mlp 8 --decoder base --static_noise --code_first \
+# 	--params_file ./params/default_iter_params --sched --sample_iters 1000 --save_iters 10000 \
+# 	--path_vgg_weights vgg_weights --prefix_vgg_weights imagenet # --ckpt_name ./checkpoints/no_wgan_loss_v6/080000_64.model
 
-python train.py --name encoder_decoder_v1 --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
-	--lambda_cls 0 --lambda_idt 1 --lambda_prcp 0 --lambda_msssim 0 --no_use_gan --n_mlp 8 --decoder base --static_noise --code_first \
-	--params_file ./params/default_iter_params --sched --sample_iters 1000 --save_iters 10000 \
+# python train.py --name encoder_decoder_v2 --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
+# 	--lambda_cls 1 --lambda_idt 1 --lambda_prcp 0 --lambda_msssim 0 --no_use_gan --n_mlp 8 --decoder base --static_noise --code_first \
+# 	--params_file ./params/default_iter_params --sched --sample_iters 1000 --save_iters 10000 \
+# 	--path_vgg_weights vgg_weights --prefix_vgg_weights imagenet # --ckpt_name ./checkpoints/no_wgan_loss_v6/080000_64.model
+
+# python train.py --name encoder_decoder_v3 --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
+# 	--lambda_cls 0 --lambda_idt 1 --lambda_prcp 1 --lambda_msssim 0 --no_use_gan --n_mlp 8 --decoder base --static_noise --code_first \
+# 	--params_file ./params/default_iter_params --sched --sample_iters 1000 --save_iters 10000 \
+# 	--path_vgg_weights vgg_weights --prefix_vgg_weights imagenet # --ckpt_name ./checkpoints/no_wgan_loss_v6/080000_64.model
+
+# python train.py --name encoder_decoder_v4 --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
+# 	--lambda_cls 0 --lambda_idt 1 --lambda_prcp 1 --lambda_msssim 1 --no_use_gan --n_mlp 8 --decoder base --static_noise --code_first \
+# 	--params_file ./params/default_iter_params --sched --sample_iters 1000 --save_iters 10000 \
+# 	--path_vgg_weights vgg_weights --prefix_vgg_weights imagenet --ckpt_name ./checkpoints/encoder_decoder_v3/080000_64.model
+
+# python train.py --name encoder_decoder_v5 --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
+# 	--lambda_cls 1 --lambda_idt 1 --lambda_prcp 1 --lambda_msssim 0 --no_use_gan --n_mlp 8 --decoder base --static_noise --code_first \
+# 	--params_file ./params/default_iter_params --sched --sample_iters 1000 --save_iters 10000 \
+# 	--path_vgg_weights vgg_weights --prefix_vgg_weights imagenet --ckpt_name ./checkpoints/encoder_decoder_v5/150000_128.model
+
+# python train.py --name encoder_decoder_v6 --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
+# 	--lambda_cls 0.4 --lambda_idt 1.5 --lambda_prcp 1 --lambda_msssim 0 --no_use_gan --n_mlp 8 --decoder base --static_noise --code_first \
+# 	--params_file ./params/default_iter_params --sched --sample_iters 1000 --save_iters 10000 \
+# 	--path_vgg_weights vgg_weights --prefix_vgg_weights imagenet # --ckpt_name ./checkpoints/no_wgan_loss_v6/080000_64.model
+
+# python train.py --name encoder_decoder_v7 --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
+# 	--lambda_cls 0.4 --lambda_idt 1 --lambda_prcp 1.5 --lambda_msssim 0 --no_use_gan --n_mlp 8 --decoder base --static_noise --code_first \
+# 	--params_file ./params/default_iter_params --sched --sample_iters 1000 --save_iters 10000 \
+# 	--path_vgg_weights vgg_weights --prefix_vgg_weights imagenet # --ckpt_name ./checkpoints/no_wgan_loss_v6/080000_64.model
+
+# попробовать сильно больше итераций с лучшим из 6 или 7
+# python train.py --name encoder_decoder_v8 --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
+# 	--lambda_cls 0.4 --lambda_idt 1 --lambda_prcp 1.5 --lambda_msssim 0 --no_use_gan --n_mlp 8 --decoder base --static_noise --code_first \
+# 	--params_file ./params/big_iter_params --sched --sample_iters 1000 --save_iters 10000 \
+# 	--path_vgg_weights vgg_weights --prefix_vgg_weights imagenet # --ckpt_name ./checkpoints/no_wgan_loss_v6/080000_64.model
+
+# попробовать предобученный на лицах с параметрами из 6 или 7 
+# python train.py --name encoder_decoder_v9 --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
+# 	--lambda_cls 0.4 --lambda_idt 1 --lambda_prcp 1.5 --lambda_msssim 0 --no_use_gan --n_mlp 8 --decoder base --static_noise --code_first --use_face_weights \
+# 	--params_file ./params/default_iter_params --sched --sample_iters 1000 --save_iters 10000 \
+# 	--path_vgg_weights vgg_weights --prefix_vgg_weights imagenet # --ckpt_name ./checkpoints/no_wgan_loss_v6/080000_64.model
+
+
+python train.py --name encoder_decoder_v8_disc --source_path ../../datasets/JTA_parsed/ --target_path ../../datasets/DukeMTMC/ \
+	--lambda_cls 0.4 --lambda_idt 1 --lambda_prcp 1.5 --lambda_msssim 0 --n_mlp 8 --decoder base --static_noise --code_first \
+	--params_file ./params/big_iter_params --sched --sample_iters 1000 --save_iters 10000 \
 	--path_vgg_weights vgg_weights --prefix_vgg_weights imagenet # --ckpt_name ./checkpoints/no_wgan_loss_v6/080000_64.model

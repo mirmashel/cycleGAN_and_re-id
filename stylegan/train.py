@@ -378,7 +378,7 @@ if __name__ == '__main__':
     parser.add_argument('--active_styles', type = int, default = 14)
     parser.add_argument('--decoder', type = str, default = 'base')
     parser.add_argument('--code_first', action = 'store_true')
-
+    parser.add_argument('--use_face_weights', action = 'store_true')
 
     parser.add_argument('--ckpt_name', default=None, type=str, help='load from previous checkpoints')
     
@@ -402,11 +402,19 @@ if __name__ == '__main__':
 
 
 
-    generator = nn.DataParallel(StyledGenerator(args.code_size, classes = dataset.total_ids, use_cls = args.lambda_cls != 0, n_mlp = args.n_mlp, static_noise = args.static_noise, active_style_layers = args.active_styles, decoder = args.decoder, code_first = args.code_first)).cuda()
-    discriminator = nn.DataParallel(
-        Discriminator(from_rgb_activate=not args.no_from_rgb_activate)
+    generator = nn.DataParallel(StyledGenerator(
+        args.code_size, classes = dataset.total_ids, use_cls = args.lambda_cls != 0, 
+        n_mlp = args.n_mlp, static_noise = args.static_noise, active_style_layers = args.active_styles, 
+        decoder = args.decoder, code_first = args.code_first, use_face_weights = args.use_face_weights
+    )).cuda()
+    discriminator = nn.DataParallel(Discriminator(
+        from_rgb_activate=not args.no_from_rgb_activate, use_face_weights = args.use_face_weights
+    )).cuda()
+    g_running = StyledGenerator(
+        args.code_size, classes = dataset.total_ids, use_cls = args.lambda_cls != 0, 
+        n_mlp = args.n_mlp, static_noise = args.static_noise, active_style_layers = args.active_styles, 
+        decoder = args.decoder, code_first = args.code_first, use_face_weights = args.use_face_weights
     ).cuda()
-    g_running = StyledGenerator(args.code_size, classes = dataset.total_ids, use_cls = args.lambda_cls != 0, n_mlp = args.n_mlp, static_noise = args.static_noise, active_style_layers = args.active_styles, decoder = args.decoder, code_first = args.code_first).cuda()
     g_running.train(False)
 
     g_optimizer = optim.Adam(
@@ -418,13 +426,13 @@ if __name__ == '__main__':
     if args.n_mlp is not None:
         g_optimizer.add_param_group({'params': generator.module.style.parameters()})
     if args.code_first:
-        g_optimizer.add_param_group({'params': generator.module.init_noise.parameters()})
+        g_optimizer.add_param_group({'params': generator.module.init_noise_16.parameters()})
+        g_optimizer.add_param_group({'params': generator.module.init_noise_64.parameters()})
 
     d_optimizer = optim.Adam(discriminator.parameters(), lr=args.lr, betas=(0.0, 0.99))
 
     accumulate(g_running, generator.module, 0)
 
-    
     step = None
     i = 0
     i_step = None

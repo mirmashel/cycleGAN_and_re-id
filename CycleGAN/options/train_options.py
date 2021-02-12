@@ -40,6 +40,8 @@ class TrainOptions(BaseOptions):
         parser.add_argument('--use_SP', action = 'store_true', help = 'use similarity preserving loss (only cycleGAN)')
         parser.add_argument('--SP_backbone', type = str, default = 'resnet34', help = 'backbone to similarity preserving model (only cycleGAN)')
         parser.add_argument('--SP_m', type = float, default = 2, help = 'margin to train similarity preserving model (only cycleGAN)')
+
+        parser.add_argument('--use_PRCP', action = 'store_true', help = 'use perceptual loss (only cycleGAN)')
         
         self.isTrain = True
         return parser

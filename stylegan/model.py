@@ -6,7 +6,7 @@ from torch.nn import functional as F
 from torch.autograd import Function
 from torchvision import models
 import os
-
+from collections import OrderedDict
 from math import sqrt
 
 import random
@@ -605,10 +605,38 @@ class OrigStyledGenerator(nn.Module):
         
 
 class StyledGenerator(nn.Module):
-    def __init__(self, code_dim=512, n_mlp=None, classes = 700, use_cls = True, static_noise = False, active_style_layers = 14, decoder = 'base', code_first = False):
+    def __init__(self, code_dim=512, n_mlp=None, classes = 700, use_cls = True, static_noise = False, active_style_layers = 14, decoder = 'base', code_first = False, use_face_weights = False):
         super().__init__()
 
         self.generator = Generator(code_dim)
+
+        self.use_mlp = False
+        if n_mlp is not None:
+            self.use_mlp = True
+            layers = [PixelNorm()]
+            for i in range(n_mlp):
+                layers.append(EqualLinear(code_dim, code_dim))
+                layers.append(nn.LeakyReLU(0.2))
+
+            self.style = nn.Sequential(*layers)
+
+        if use_face_weights:
+            ckpt = torch.load("./stylegan-256px-new.model")
+
+            old_ckpt_g = ckpt['g_running']
+            new_ckpt_g = OrderedDict()
+            for k in old_ckpt_g:
+                splited = k.split('.')
+                if (splited[0] == 'generator' and (splited[1] == 'progression' or splited[1] == 'to_rgb') and int(splited[2]) <= 6):
+                    new_ckpt_g.update({'.'.join(splited[1:]): old_ckpt_g[k]})
+            self.generator.load_state_dict(new_ckpt_g)
+
+            new_ckpt_g = OrderedDict()
+            for k in old_ckpt_g:
+                splited = k.split('.')
+                if splited[0] == 'style':
+                    new_ckpt_g.update({'.'.join(splited[1:]): old_ckpt_g[k]})
+            self.style.load_state_dict(new_ckpt_g)
 
 
         if decoder == 'base':
@@ -646,17 +674,6 @@ class StyledGenerator(nn.Module):
 
 
 
-        self.use_mlp = False
-        if n_mlp is not None:
-            self.use_mlp = True
-            layers = [PixelNorm()]
-            for i in range(n_mlp):
-                layers.append(EqualLinear(code_dim, code_dim))
-                layers.append(nn.LeakyReLU(0.2))
-
-            self.style = nn.Sequential(*layers)
-
-
 
         self.use_cls = classes is not None and use_cls
 
@@ -670,9 +687,16 @@ class StyledGenerator(nn.Module):
         else:
             self.classifier_on_style = None
 
-        self.init_noise = nn.Sequential(EqualLinear(code_dim, 16))
+        if code_first:
+            self.init_noise_16 = nn.Sequential(EqualLinear(code_dim, 16))
+            self.init_noise_64 = nn.Sequential(EqualLinear(code_dim, 64))
+
+        else:
+            self.init_noise = nn.Sequential(EqualLinear(code_dim, 16))
 
         self.active_style_layers = active_style_layers
+
+
 
         self.static_noise = static_noise
 
@@ -707,7 +731,8 @@ class StyledGenerator(nn.Module):
                 else:
                     noise.append(torch.randn(batch, 1, size, size, device=img_code.device))
             if self.code_first:
-                noise[0] = self.init_noise(img_code).view(-1, 1, 4, 4)
+                noise[0] = self.init_noise_16(img_code).view(-1, 1, 4, 4)
+                noise[1] = self.init_noise_64(img_code).view(-1, 1, 8, 8)
 
         if self.classifier_on_style is not None:
             classifier = self.classifier_on_style(img_code)
@@ -729,7 +754,7 @@ class StyledGenerator(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, fused=True, from_rgb_activate=False):
+    def __init__(self, fused=True, from_rgb_activate=False, use_face_weights = False):
         super().__init__()
 
         self.progression = nn.ModuleList(
@@ -772,6 +797,23 @@ class Discriminator(nn.Module):
         self.n_layer = len(self.progression)
 
         self.linear = EqualLinear(512, 1)
+
+        if use_face_weights:
+            ckpt = torch.load("./stylegan-256px-new.model")
+            old_ckpt_disc = ckpt['discriminator']
+            new_ckpt_disc = OrderedDict()
+            for k in old_ckpt_disc:
+                splited = k.split('.')
+                if (splited[0] == 'progression' or splited[0] == 'from_rgb') and int(splited[1]) > 0:
+                    splited[1] = str(int(splited[1]) - 1)
+                    # if splited[0] == 'from_rgb':
+                    #     splited.pop(2)
+                    new_k = '.'.join(splited)
+                    new_ckpt_disc.update({new_k: old_ckpt_disc[k]})
+                if splited[0] == 'linear':
+                    new_ckpt_disc.update({k: old_ckpt_disc[k]})
+
+            self.load_state_dict(new_ckpt_disc)
 
     def forward(self, input, step=0, alpha=-1):
         for i in range(step, -1, -1):

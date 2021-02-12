@@ -112,7 +112,8 @@ def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[]):
         assert(torch.cuda.is_available())
         net.to(gpu_ids[0])
         net = torch.nn.DataParallel(net, gpu_ids)  # multi-GPUs
-    init_weights(net, init_type, init_gain=init_gain)
+    if init_type != '':
+        init_weights(net, init_type, init_gain=init_gain)
     return net
 
 
@@ -207,6 +208,10 @@ def define_SP(backbone_name = 'resnet34', init_type='normal', init_gain=0.02, gp
     net = TripletLossModel(backbone_name)
     return init_net(net, init_type, init_gain, gpu_ids)
 
+def define_PRCP(gpu_ids=[]):
+    net = PerceptualLoss()
+    return init_net(net, '', 0, gpu_ids)
+
 ##############################################################################
 # Classes
 ##############################################################################
@@ -223,12 +228,87 @@ class TripletLossModel(nn.Module):
 
         self.backbone = nn.Sequential(*list(backbone(pretrained = True).children())[:-1])
 
-
     def forward(self, anchor, positive, negative):
         self.anchor_emb = self.backbone(anchor)
         self.positive_emb = self.backbone(positive)
         self.negative_emb = self.backbone(negative)
         return self.anchor_emb, self.positive_emb, self.negative_emb
+
+
+
+class PerceptualLoss(nn.Module):
+
+    class Normalize:
+        def __init__(self, mean, std, inplace=False, dtype=torch.float, device='cpu'):
+            self.mean = torch.as_tensor(mean, dtype=dtype, device=device)[None, :, None, None]
+            self.std = torch.as_tensor(std, dtype=dtype, device=device)[None, :, None, None]
+            self.inplace = inplace
+        def __call__(self, tensor):
+            if not self.inplace:
+                tensor = tensor.clone()
+            tensor.sub_(self.mean).div_(self.std)
+            return tensor
+
+    def __init__(self):
+        super(PerceptualLoss, self).__init__()
+        self.vgg = torchvision.models.vgg16(pretrained = True) 
+        self.vgg.eval()
+        self.criterion = torch.nn.MSELoss(reduction='mean')
+        self.content_layers = [3, 8, 15, 22]
+        self.style_layers = [15]
+        self.content_weight = 0.1
+        self.style_weight = 1
+
+        input_mean = (0.5, 0.5, 0.5)
+        input_std = (0.5, 0.5, 0.5)
+        imagenet_mean = (0.485, 0.456, 0.406)
+        imagenet_std = (0.229, 0.224, 0.225)
+        self.normalizer = torchvision.transforms.Compose([
+            PerceptualLoss.Normalize(mean=[-mean/std for mean, std in zip(input_mean, input_std)], std=[1/std for std in input_std], dtype = torch.float32, device = 'cuda'),
+            PerceptualLoss.Normalize(mean=imagenet_mean, std=imagenet_std, dtype = torch.float32, device = 'cuda')
+        ])
+
+
+    def extract_features(self, x, content_fl = True, style_fl = True):
+        features = {'content' : [], 'style' : []}
+        for index, layer in enumerate(self.vgg.features):
+            x = layer(x)
+            if index in self.content_layers and content_fl:
+                features['content'].append(x)
+
+            if index in self.style_layers and style_fl:
+                features['style'].append(x)
+
+        return features
+
+    def calc_content_loss(self, features, targets):
+        content_loss = 0
+        for f, t in zip(features, targets):
+            content_loss += self.criterion(f, t)
+        return content_loss
+
+    def gram(self, x):
+        b, c, h, w = x.size()
+        g = torch.bmm(x.view(b, c, h * w), x.view(b, c, h * w).transpose(1, 2))
+        return g.div(h * w)
+
+    def calc_style_loss(self, features, targets):
+        gram_loss = 0
+        for f, t in zip(features, targets):
+            gram_loss += self.criterion(self.gram(f), self.gram(t)) 
+        return gram_loss
+
+    def forward(self, x, y, neg):
+        x_features = self.extract_features(self.normalizer(x))
+        y_features = self.extract_features(self.normalizer(y), style_fl = False)
+        neg_features = self.extract_features(self.normalizer(neg), content_fl = False)
+
+        content_loss = self.calc_content_loss(x_features['content'], y_features['content']) * self.content_weight
+        style_loss = self.calc_style_loss(x_features['style'], neg_features['style']) * self.style_weight
+
+        return content_loss + style_loss
+
+
 
 
 class GANLoss(nn.Module):
