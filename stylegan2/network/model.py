@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .blocks import ResBlockDown, SelfAttention, ResBlock, ResBlockD, ResBlockUp, Padding, adaIN
+from .blocks import ResBlockDown, SelfAttention, ResBlock, ResBlockD, ResBlockUp, Padding, adaIN, EqualLinear, PixelNorm
 import math
 import sys
 import os
@@ -58,10 +58,10 @@ class Generator(nn.Module):
     for i in range(1, len(slice_idx)):
         slice_idx[i] = slice_idx[i-1] + slice_idx[i]
     
-    def __init__(self, pic_size, pad_size_to):
+    def __init__(self, pic_size, pad_size_to, code_dim, n_mlp):
         super(Generator, self).__init__()
         
-        self.sigmoid = nn.Sigmoid()
+        self.tanh = nn.Tanh()
         self.relu = nn.LeakyReLU(inplace = False)
         
         #in 3*224*224 for voxceleb2
@@ -104,22 +104,29 @@ class Generator(nn.Module):
         
         self.p = nn.Parameter(torch.rand(self.P_LEN,512).normal_(0.0,0.02))
         
-        self.finetuning = False
+        # self.finetuning = False
         # self.psi = nn.Parameter(torch.rand(self.P_LEN,1))
         # self.e_finetuning = e_finetuning
         
+        if n_mlp is not None:
+            self.use_mlp = True
+            layers = [PixelNorm()]
+            for i in range(n_mlp):
+                layers.append(EqualLinear(512, 512))
+                layers.append(nn.LeakyReLU(0.2))
+
+            self.style = nn.Sequential(*layers)
             
     def forward(self, y, e):
         if math.isnan(self.p[0,0]):
             sys.exit()
+
+        if self.use_mlp:
+            e = self.style(e)
         
-        if self.finetuning:
-            e_psi = self.psi.unsqueeze(0)
-            e_psi = e_psi.expand(e.shape[0],self.P_LEN,1)
-        else:
-            p = self.p.unsqueeze(0)
-            p = p.expand(e.shape[0],self.P_LEN,512)
-            e_psi = torch.bmm(p, e) #B, p_len, 1
+        p = self.p.unsqueeze(0)
+        p = p.expand(e.shape[0],self.P_LEN,512)
+        e_psi = torch.bmm(p, e) #B, p_len, 1
         
         #in 3*224*224 for voxceleb2
         out = self.pad(y)
@@ -172,22 +179,19 @@ class Generator(nn.Module):
         
         out = self.conv2d(out)
         
-        out = self.sigmoid(out)
+        out = self.tanh(out)
         
-        #out = out*255
-        
-        #out 3*224*224
         return out
 
 
 class Discriminator(nn.Module):
-    def __init__(self, num_videos, path_to_Wi, finetuning=False, e_finetuning=None):
+    def __init__(self, pic_size, pad_size_to):
         super(Discriminator, self).__init__()
         self.relu = nn.LeakyReLU()
         
         #in 6*224*224
-        self.pad = Padding(224) #out 6*256*256
-        self.resDown1 = ResBlockDown(6, 64) #out 64*128*128
+        self.pad = Padding(pic_size, pad_size_to) #out 6*256*256
+        self.resDown1 = ResBlockDown(3, 64) #out 64*128*128
         self.resDown2 = ResBlockDown(64, 128) #out 128*64*64
         self.resDown3 = ResBlockDown(128, 256) #out 256*32*32
         self.self_att = SelfAttention(256) #out 256*32*32
@@ -196,25 +200,9 @@ class Discriminator(nn.Module):
         self.resDown6 = ResBlockDown(512, 512) #out 512*4*4
         self.res = ResBlockD(512) #out 512*4*4
         self.sum_pooling = nn.AdaptiveAvgPool2d((1,1)) #out 512*1*1
+        self.score = nn.Conv2d(1, 1) # 1*1
     
-    def forward(self, x, y, i):
-        out = self.pad(x) #out 3*256*256
-        out = self.resDown1(out) #out 64*128*128
-        out = self.resDown2(out) #out 128*64*64
-        out = self.resDown3(out) #out 256*32*32
-        
-        out = self.self_att(out) #out 256*32*32
-        
-        out = self.resDown4(out) #out 512*16*16
-        out = self.resDown5(out) #out 512*8*8
-        out = self.resDown6(out) #out 512*4*4
-        
-        out = self.sum_pooling(out) #out 512*1*1
-        out = self.relu(out) #out 512*1*1
-        out = out.view(-1,512,1) #out B*512*1
-        return out
-
-        out = torch.cat((x,y), dim=-3) #out B*6*224*224
+    def forward(self, x):
         
         out = self.pad(out)
         out1 = self.resDown1(out)
@@ -230,79 +218,53 @@ class Discriminator(nn.Module):
         
         out = self.sum_pooling(out7)
         out = self.relu(out)
-        
-        out = out.squeeze(-1) #out B*512*1
-        
-        batch_start_idx = torch.cuda.current_device() * self.W_i.shape[1]//self.gpu_num
-        batch_end_idx = (torch.cuda.current_device() + 1) * self.W_i.shape[1]//self.gpu_num
-        
-        if self.finetuning:
-            out = torch.bmm(out.transpose(1,2), (self.w_prime.unsqueeze(0).expand(out.shape[0],512,1))) + self.b
-        else:
-            out = torch.bmm(out.transpose(1,2), (self.W_i[:, batch_start_idx:batch_end_idx].unsqueeze(-1)).transpose(0,1) + self.w_0) + self.b #1x1
-        
-        return out, [out1 , out2, out3, out4, out5, out6, out7]
+        out = self.score(out)        
 
-class Cropped_VGG19(nn.Module):
-    def __init__(self):
-        super(Cropped_VGG19, self).__init__()
-        
-        self.conv1_1 = nn.Conv2d(3,64,3)
-        self.conv1_2 = nn.Conv2d(64,64,3)
-        self.conv2_1 = nn.Conv2d(64,128,3)
-        self.conv2_2 = nn.Conv2d(128,128,3)
-        self.conv3_1 = nn.Conv2d(128,256,3)
-        self.conv3_2 = nn.Conv2d(256,256,3)
-        self.conv3_3 = nn.Conv2d(256,256,3)
-        self.conv4_1 = nn.Conv2d(256,512,3)
-        self.conv4_2 = nn.Conv2d(512,512,3)
-        self.conv4_3 = nn.Conv2d(512,512,3)
-        self.conv5_1 = nn.Conv2d(512,512,3)
-        #self.conv5_2 = nn.Conv2d(512,512,3)
-        #self.conv5_3 = nn.Conv2d(512,512,3)
-        
-    def forward(self, x):
-        conv1_1_pad     = F.pad(x, (1, 1, 1, 1))
-        conv1_1         = self.conv1_1(conv1_1_pad)
-        relu1_1         = F.relu(conv1_1)
-        conv1_2_pad     = F.pad(relu1_1, (1, 1, 1, 1))
-        conv1_2         = self.conv1_2(conv1_2_pad)
-        relu1_2         = F.relu(conv1_2)
-        pool1_pad       = F.pad(relu1_2, (0, 1, 0, 1), value=float('-inf'))
-        pool1           = F.max_pool2d(pool1_pad, kernel_size=(2, 2), stride=(2, 2), padding=0, ceil_mode=False)
-        conv2_1_pad     = F.pad(pool1, (1, 1, 1, 1))
-        conv2_1         = self.conv2_1(conv2_1_pad)
-        relu2_1         = F.relu(conv2_1)
-        conv2_2_pad     = F.pad(relu2_1, (1, 1, 1, 1))
-        conv2_2         = self.conv2_2(conv2_2_pad)
-        relu2_2         = F.relu(conv2_2)
-        pool2_pad       = F.pad(relu2_2, (0, 1, 0, 1), value=float('-inf'))
-        pool2           = F.max_pool2d(pool2_pad, kernel_size=(2, 2), stride=(2, 2), padding=0, ceil_mode=False)
-        conv3_1_pad     = F.pad(pool2, (1, 1, 1, 1))
-        conv3_1         = self.conv3_1(conv3_1_pad)
-        relu3_1         = F.relu(conv3_1)
-        conv3_2_pad     = F.pad(relu3_1, (1, 1, 1, 1))
-        conv3_2         = self.conv3_2(conv3_2_pad)
-        relu3_2         = F.relu(conv3_2)
-        conv3_3_pad     = F.pad(relu3_2, (1, 1, 1, 1))
-        conv3_3         = self.conv3_3(conv3_3_pad)
-        relu3_3         = F.relu(conv3_3)
-        pool3_pad       = F.pad(relu3_3, (0, 1, 0, 1), value=float('-inf'))
-        pool3           = F.max_pool2d(pool3_pad, kernel_size=(2, 2), stride=(2, 2), padding=0, ceil_mode=False)
-        conv4_1_pad     = F.pad(pool3, (1, 1, 1, 1))
-        conv4_1         = self.conv4_1(conv4_1_pad)
-        relu4_1         = F.relu(conv4_1)
-        conv4_2_pad     = F.pad(relu4_1, (1, 1, 1, 1))
-        conv4_2         = self.conv4_2(conv4_2_pad)
-        relu4_2         = F.relu(conv4_2)
-        conv4_3_pad     = F.pad(relu4_2, (1, 1, 1, 1))
-        conv4_3         = self.conv4_3(conv4_3_pad)
-        relu4_3         = F.relu(conv4_3)
-        pool4_pad       = F.pad(relu4_3, (0, 1, 0, 1), value=float('-inf'))
-        pool4           = F.max_pool2d(pool4_pad, kernel_size=(2, 2), stride=(2, 2), padding=0, ceil_mode=False)
-        conv5_1_pad     = F.pad(pool4, (1, 1, 1, 1))
-        conv5_1         = self.conv5_1(conv5_1_pad)
-        relu5_1         = F.relu(conv5_1)
-        
-        return [relu1_1, relu2_1, relu3_1, relu4_1, relu5_1]
-    
+        return out #, [out1 , out2, out3, out4, out5, out6, out7]
+
+class NLayerDiscriminator(nn.Module):
+    """Defines a PatchGAN discriminator"""
+
+    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d):
+        """Construct a PatchGAN discriminator
+
+        Parameters:
+            input_nc (int)  -- the number of channels in input images
+            ndf (int)       -- the number of filters in the last conv layer
+            n_layers (int)  -- the number of conv layers in the discriminator
+            norm_layer      -- normalization layer
+        """
+        super(NLayerDiscriminator, self).__init__()
+        if type(norm_layer) == functools.partial:  # no need to use bias as BatchNorm2d has affine parameters
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+
+        kw = 4
+        padw = 1
+        sequence = [nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw), nn.LeakyReLU(0.2, True)]
+        nf_mult = 1
+        nf_mult_prev = 1
+        for n in range(1, n_layers):  # gradually increase the number of filters
+            nf_mult_prev = nf_mult
+            nf_mult = min(2 ** n, 8)
+            sequence += [
+                nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw, bias=use_bias),
+                norm_layer(ndf * nf_mult),
+                nn.LeakyReLU(0.2, True)
+            ]
+
+        nf_mult_prev = nf_mult
+        nf_mult = min(2 ** n_layers, 8)
+        sequence += [
+            nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=use_bias),
+            norm_layer(ndf * nf_mult),
+            nn.LeakyReLU(0.2, True)
+        ]
+
+        sequence += [nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]  # output 1 channel prediction map
+        self.model = nn.Sequential(*sequence)
+
+    def forward(self, input):
+        """Standard forward."""
+        return self.model(input)

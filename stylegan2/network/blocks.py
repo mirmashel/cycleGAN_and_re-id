@@ -86,6 +86,25 @@ def adaIN(feature, mean_style, std_style, eps = 1e-5):
     adain = adain.view(B,C,H,W)
     return adain
 
+class PixelNorm(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, input):
+        return input / torch.sqrt(torch.mean(input ** 2, dim=1, keepdim=True) + 1e-8)
+
+class EqualLinear(nn.Module):
+    def __init__(self, in_dim, out_dim):
+        super().__init__()
+
+        linear = nn.Linear(in_dim, out_dim)
+        linear.weight.data.normal_()
+        linear.bias.data.zero_()
+
+        self.linear = equal_lr(linear)
+
+    def forward(self, input):
+        return self.linear(input)
 
 class ResBlock(nn.Module):
     def __init__(self, in_channel):
