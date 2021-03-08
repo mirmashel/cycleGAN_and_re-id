@@ -20,6 +20,7 @@ import tensorboardX
 import shutil
 import time
 import numpy as np
+from tqdm import tqdm
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config', type=str, default='configs/edges2handbags_folder.yaml', help='Path to the config file.')
@@ -64,23 +65,34 @@ output_directory = os.path.join(opts.output_path + "/outputs", model_name)
 checkpoint_directory, image_directory = prepare_sub_folder(output_directory)
 shutil.copy(opts.config, os.path.join(output_directory, 'config.yaml')) # copy config file to output folder
 
+state_msg = ''
 # Start training
 iterations = trainer.resume(checkpoint_directory, hyperparameters=config) if opts.resume else 0
 while True:
-    for it, (images_a, images_b) in enumerate(zip(train_loader_a, train_loader_b)):
-        trainer.update_learning_rate()
+
+    pbar = tqdm(range(iterations, max_iter))
+    pbar_it = iter(pbar)
+
+
+    for images_a, images_b in zip(train_loader_a, train_loader_b):
+
         images_a, images_b = images_a.cuda().detach(), images_b.cuda().detach()
 
-        with Timer("Elapsed time in update: %f"):
+        start_time = time.time()
             # Main training code
-            trainer.dis_update(images_a, images_b, config)
-            trainer.gen_update(images_a, images_b, config)
-            torch.cuda.synchronize()
+        trainer.dis_update(images_a, images_b, config)
+        trainer.gen_update(images_a, images_b, config)
+        torch.cuda.synchronize()
+        trainer.update_learning_rate()
+
+        elapsed_time = time.time() - start_time
 
         # Dump training stats in log file
         if (iterations + 1) % config['log_iter'] == 0:
-            print("Training Progress: %08d/%08d" % (iterations + 1, max_iter))
+            # print("Training Progress: %08d/%08d" % (iterations + 1, max_iter))
             write_loss(iterations, trainer, train_writer)
+        pbar.set_description(f'Elapsed time: {elapsed_time:.3f}')
+
 
         # Write images
         if (iterations + 1) % config['image_save_iter'] == 0:
@@ -102,5 +114,6 @@ while True:
             trainer.save(checkpoint_directory, iterations)
 
         iterations += 1
+        next(pbar_it)
         if iterations >= max_iter:
             sys.exit('Finish training')

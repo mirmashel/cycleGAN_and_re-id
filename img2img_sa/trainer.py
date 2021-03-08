@@ -13,10 +13,11 @@ class MUNIT_Trainer(nn.Module):
     def __init__(self, hyperparameters):
         super(MUNIT_Trainer, self).__init__()
         lr = hyperparameters['lr']
-        self.gen_a = AdaInGenerator(hyperparameters['input_dim_a'], hyperparameters['gen'])  # auto-encoder for domain a
-        self.gen_b = AdaInGenerator(hyperparameters['input_dim_b'], hyperparameters['gen'])  # auto-encoder for domain b
-        self.dis_a = ImageDiscriminator(hyperparameters['input_dim_a'], hyperparameters['dis'])  # discriminator for domain a
-        self.dis_b = ImageDiscriminator(hyperparameters['input_dim_b'], hyperparameters['dis'])  # discriminator for domain b
+        use_self_attn = (not hyperparameters['not_use_self_attm']) if 'not_use_self_attm' in hyperparameters else True
+        self.gen_a = AdaInGenerator(hyperparameters['input_dim_a'], hyperparameters['gen'], use_self_attn)  # auto-encoder for domain a
+        self.gen_b = AdaInGenerator(hyperparameters['input_dim_b'], hyperparameters['gen'], use_self_attn)  # auto-encoder for domain b
+        self.dis_a = ImageDiscriminator(hyperparameters['input_dim_a'], hyperparameters['dis'], use_self_attn)  # discriminator for domain a
+        self.dis_b = ImageDiscriminator(hyperparameters['input_dim_b'], hyperparameters['dis'], use_self_attn)  # discriminator for domain b
         self.instancenorm = nn.InstanceNorm2d(512, affine=False)
         self.style_dim = hyperparameters['gen']['style_dim']
         display_size = int(hyperparameters['display_size'])
@@ -99,6 +100,7 @@ class MUNIT_Trainer(nn.Module):
         # identity loss
         self.loss_identity_a = self.recon_criterion(x_a, x_ab) if hyperparameters['recon_x_identity'] > 0 else 0
         self.loss_identity_b = self.recon_criterion(x_b, x_ba) if hyperparameters['recon_x_identity'] > 0 else 0
+        # print(self.loss_identity_a)
         # total loss
         self.loss_gen_total = hyperparameters['gan_w'] * self.loss_gen_adv_a + \
                               hyperparameters['gan_w'] * self.loss_gen_adv_b + \

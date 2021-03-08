@@ -175,6 +175,7 @@ def write_loss(iterations, trainer, train_writer):
                if not callable(getattr(trainer, attr)) and not attr.startswith("__") and ('loss' in attr or 'grad' in attr or 'nwd' in attr)]
     for m in members:
         train_writer.add_scalar(m, getattr(trainer, m), iterations + 1)
+    
 
 
 def slerp(val, low, high):
@@ -228,11 +229,18 @@ def load_vgg16(model_dir):
             os.system('wget https://www.dropbox.com/s/76l3rt4kyi3s8x7/vgg16.t7?dl=1 -O ' + os.path.join(model_dir, 'vgg16.t7'))
         # vgglua = load_lua(os.path.join(model_dir, 'vgg16.t7'))
         vgglua = torchfile.load(os.path.join(model_dir, 'vgg16.t7'))
-        print(vgglua)
         vgg = Vgg16()
-        # print(vgg)
-        for (src, dst) in zip(vgglua.parameters()[0], vgg.parameters()):
-            dst.data[:] = src
+        
+        src_it = iter(vgglua.modules)
+
+        for dst in vgg.parameters():
+            if len(dst.data.size()) == 4:
+                src = next(src_it)
+                while src.weight is None:
+                    src = next(src_it)
+                dst.data[:] = torch.tensor(src.weight)
+            else:
+                continue
         torch.save(vgg.state_dict(), os.path.join(model_dir, 'vgg16.weight'))
     vgg = Vgg16()
     vgg.load_state_dict(torch.load(os.path.join(model_dir, 'vgg16.weight')))

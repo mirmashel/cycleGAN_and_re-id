@@ -18,7 +18,7 @@ except ImportError: # will be 3.x series
 
 class ImageDiscriminator(nn.Module):
     # Multi-scale discriminator architecture
-    def __init__(self, input_dim, params):
+    def __init__(self, input_dim, params, use_self_attn):
         super(ImageDiscriminator, self).__init__()
         self.n_layer = params['n_layer']
         self.gan_type = params['gan_type']
@@ -31,9 +31,9 @@ class ImageDiscriminator(nn.Module):
         self.downsample = nn.AvgPool2d(3, stride=2, padding=[1, 1], count_include_pad=False)
         self.cnns = nn.ModuleList()
         for _ in range(self.num_scales):
-            self.cnns.append(self._make_net())
+            self.cnns.append(self._make_net(use_self_attn))
 
-    def _make_net(self):
+    def _make_net(self, use_self_attn):
         dim = self.dim
         cnn_x = []
         cnn_x += [Conv2dBlock(self.input_dim, dim, 4, 2, 1, norm='none', activation=self.activ, pad_type=self.pad_type)]
@@ -41,7 +41,8 @@ class ImageDiscriminator(nn.Module):
             cnn_x += [Conv2dBlock(dim, dim * 2, 4, 2, 1, norm=self.norm, activation=self.activ, pad_type=self.pad_type)]
             dim *= 2
         #print(cnn_x)
-        cnn_x += [Self_Attn(dim, 'relu')] # Self Attention
+        if use_self_attn:
+            cnn_x += [Self_Attn(dim, 'relu')] # Self Attention
         cnn_x += [nn.Conv2d(dim, 1, 1, 1, 0)]
         #print(dim)
         cnn_x = nn.Sequential(*cnn_x)
@@ -92,7 +93,7 @@ class ImageDiscriminator(nn.Module):
 
 class AdaInGenerator(nn.Module):
     # AdaIN auto-encoder architecture
-    def __init__(self, input_dim, params):
+    def __init__(self, input_dim, params, use_self_attn):
         super(AdaInGenerator, self).__init__()
         dim = params['dim']
         style_dim = params['style_dim']
@@ -107,7 +108,7 @@ class AdaInGenerator(nn.Module):
 
         # content encoder
         self.enc_content = ContentEncoder(n_downsample, n_res, input_dim, dim, 'in', activ, pad_type=pad_type)
-        self.dec = Decoder(n_downsample, n_res, self.enc_content.output_dim, input_dim, res_norm='adain', activ=activ, pad_type=pad_type)
+        self.dec = Decoder(n_downsample, n_res, self.enc_content.output_dim, input_dim, res_norm='adain', activ=activ, pad_type=pad_type, use_self_attn = use_self_attn)
 
         # MLP to generate AdaIN parameters
         self.mlp = MLP(style_dim, self.get_num_adain_params(self.dec), mlp_dim, 3, norm='none', activ=activ)
@@ -225,13 +226,14 @@ class ContentEncoder(nn.Module):
         return self.model(x)
 
 class Decoder(nn.Module):
-    def __init__(self, n_upsample, n_res, dim, output_dim, res_norm='adain', activ='relu', pad_type='zero'):
+    def __init__(self, n_upsample, n_res, dim, output_dim, res_norm='adain', activ='relu', pad_type='zero', use_self_attn = True):
         super(Decoder, self).__init__()
 
         self.model = []
         # AdaIN residual blocks
         self.model += [ResBlocks(n_res, dim, res_norm, activ, pad_type=pad_type)]
-        self.model += [Self_Attn(dim, 'relu')] # Self Attention
+        if use_self_attn:
+            self.model += [Self_Attn(dim, 'relu')] # Self Attention
 
         # upsampling blocks
         for i in range(n_upsample):
