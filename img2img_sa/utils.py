@@ -49,16 +49,19 @@ def get_all_data_loaders(conf):
         new_size_b = conf['new_size_b']
     height = conf['crop_image_height']
     width = conf['crop_image_width']
+    use_crop = 'true_crop_image_height' in conf
+    crop_height = conf['true_crop_image_height'] if use_crop else 0
+    crop_width = conf['true_crop_image_width'] if use_crop else 0
 
     if 'data_root' in conf:
         train_loader_a = get_data_loader_folder(os.path.join(conf['data_root'], 'trainA'), batch_size, True,
-                                              new_size_a, height, width, num_workers, True)
+                                               height, width, num_workers, use_crop, crop_height, crop_width)
         test_loader_a = get_data_loader_folder(os.path.join(conf['data_root'], 'testA'), batch_size, False,
-                                             new_size_a, height, width, num_workers, True)
+                                              height, width, num_workers, False)
         train_loader_b = get_data_loader_folder(os.path.join(conf['data_root'], 'trainB'), batch_size, True,
-                                              new_size_b, height, width, num_workers, True)
+                                               height, width, num_workers, use_crop, crop_height, crop_width)
         test_loader_b = get_data_loader_folder(os.path.join(conf['data_root'], 'testB'), batch_size, False,
-                                             new_size_b, height, width, num_workers, True)
+                                              height, width, num_workers, False)
     else:
         train_loader_a = get_data_loader_list(conf['data_folder_train_a'], conf['data_list_train_a'], batch_size, True,
                                                 new_size_a, height, width, num_workers, True)
@@ -84,13 +87,13 @@ def get_data_loader_list(root, file_list, batch_size, train, new_size=None,
     loader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=train, drop_last=True, num_workers=num_workers)
     return loader
 
-def get_data_loader_folder(input_folder, batch_size, train, new_size=None,
-                           height=256, width=256, num_workers=4, crop=True):
+def get_data_loader_folder(input_folder, batch_size, train,
+                           height=256, width=256, num_workers=4, crop=True, crop_height = 256, crop_width = 256):
     transform_list = [transforms.ToTensor(),
                       transforms.Normalize((0.5, 0.5, 0.5),
                                            (0.5, 0.5, 0.5))]
-    # transform_list = [transforms.RandomCrop((height, width))] + transform_list if crop else transform_list
-    transform_list = [transforms.Resize((height, width))] + transform_list if new_size is not None else transform_list
+    transform_list = [transforms.RandomCrop((crop_height, crop_width))] + transform_list if crop else transform_list
+    transform_list = [transforms.Resize((height, width))] + transform_list
     transform_list = [transforms.RandomHorizontalFlip()] + transform_list if train else transform_list
     transform = transforms.Compose(transform_list)
     dataset = ImageFolder(input_folder, transform=transform)
